@@ -1,5 +1,6 @@
 import { parse } from "@typescript-eslint/parser";
 import { analyze } from "@typescript-eslint/scope-manager";
+import { AST_NODE_TYPES } from "@typescript-eslint/types";
 function simpleParser(code) {
     return parse(code, {
         ecmaVersion: 2020,
@@ -13,12 +14,24 @@ function simpleScope(ast) {
         sourceType: 'script',
     });
 }
-let program = `
-let x:number = 3
-let y = x
-`;
-let ast = simpleParser(program);
-// console.log(ast)
-const scope = simpleScope(ast);
-console.log(scope.variables.filter(s => s['identifiers'].length > 0));
-export { simpleParser, simpleScope };
+function runNode(node) {
+    switch (node.type) {
+        case AST_NODE_TYPES.VariableDeclaration:
+            return parseVariableDeclaration(node);
+        case AST_NODE_TYPES.FunctionDeclaration:
+            return parseFunctionDeclaration(node);
+    }
+}
+function parseVariableDeclaration(node) {
+}
+function parseVariableDeclarator(node) {
+    let id = node.id;
+    if (node.hasOwnProperty('typeAnnotation')) {
+    }
+}
+function parseFunctionDeclaration(node) {
+}
+function generateConstraints() {
+}
+console.log("hello");
+export { simpleParser, simpleScope, generateConstraints };

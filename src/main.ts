@@ -1,41 +1,59 @@
-import {parse} from "@typescript-eslint/parser"
-import {analyze, ScopeManager} from "@typescript-eslint/scope-manager";
-import type {TSESTree as AST} from '@typescript-eslint/types';
-import {AST_NODE_TYPES} from "@typescript-eslint/types";
+import { parse } from "@typescript-eslint/parser"
+import { analyze, ScopeManager } from "@typescript-eslint/scope-manager";
+import type { TSESTree as AST } from '@typescript-eslint/types';
+import { AST_NODE_TYPES } from "@typescript-eslint/types";
+
+interface System {
+  ast: AST.Node | null,
+  variables: any[],
+  constraints: any[]
+}
+
+let system : System = {
+  ast: null,
+  variables: [],
+  constraints: []
+}
 
 function simpleParser(code: string): AST.Node {
-    return parse(code, {
-        ecmaVersion: 2020,
-        sourceType: "script",
-        range: true,
-    })
+  return parse(code, {
+    ecmaVersion: 2020,
+    sourceType: "script",
+    range: true,
+  })
 }
 
 function simpleScope(ast: AST.Node): ScopeManager {
-    return analyze(ast, {
-        ecmaVersion: 2020,
-        sourceType: 'script',
-    });
+  return analyze(ast, {
+    ecmaVersion: 2020,
+    sourceType: 'script',
+  });
 }
 
-function runNode (node: AST.Node) {
-    switch (node.type) {
-        case AST_NODE_TYPES.VariableDeclaration:
-            return parseVariableDeclaration(node);
-        case AST_NODE_TYPES.FunctionDeclaration:
-            return parseFunctionDeclaration(node);
-    }
-}
-function parseVariableDeclaration (node: AST.VariableDeclaration) {
+function runNode(node: AST.Node) {
+  switch (node.type) {
+    case AST_NODE_TYPES.VariableDeclaration:
+      return parseVariableDeclaration(node);
+    case AST_NODE_TYPES.FunctionDeclaration:
+      return parseFunctionDeclaration(node);
+  }
 }
 
-function parseVariableDeclarator (node: AST.VariableDeclarator) {
-    let id = node.id;
-    if (node.hasOwnProperty('typeAnnotation')) {
-    }
+function parseVariableDeclaration(node: AST.VariableDeclaration) {
+}
+
+function parseVariableDeclarator(node: AST.VariableDeclarator) {
+  let id = node.id;
+  if (node.hasOwnProperty('typeAnnotation')) {
+  }
 }
 function parseFunctionDeclaration(node: AST.FunctionDeclaration) {
 }
 
+function generateConstraints() {
+ return []
+}
 
-export {simpleParser, simpleScope, generateConstraints}
+
+
+export { simpleParser, simpleScope, generateConstraints }

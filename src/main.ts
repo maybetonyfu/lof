@@ -2,10 +2,13 @@ import { parse } from "@typescript-eslint/parser"
 import { analyze, ScopeManager } from "@typescript-eslint/scope-manager";
 import type { TSESTree as AST } from '@typescript-eslint/types';
 import { AST_NODE_TYPES } from "@typescript-eslint/types";
+import {Variable} from "@typescript-eslint/scope-manager/dist/variable";
+
+
 
 interface System {
   ast: AST.Node | null,
-  variables: any[],
+  variables: Variable[],
   constraints: any[]
 }
 
@@ -40,14 +43,22 @@ function runNode(node: AST.Node) {
 }
 
 function parseVariableDeclaration(node: AST.VariableDeclaration) {
+  node.declarations.forEach(runNode)
 }
 
 function parseVariableDeclarator(node: AST.VariableDeclarator) {
   let id = node.id;
-  if (node.hasOwnProperty('typeAnnotation')) {
+  if (id.hasOwnProperty('typeAnnotation')) {
+  //   Type annotation
   }
+
+  if (node.init !== null) {
+    runNode(node.init)
+  }
+
 }
 function parseFunctionDeclaration(node: AST.FunctionDeclaration) {
+
 }
 
 function generateConstraints() {
@@ -55,5 +66,10 @@ function generateConstraints() {
 }
 
 
+let program = "let x:number = 3"
+let ast = simpleParser(program)
+let scope = simpleScope(ast)
 
+let variables = scope.variables.filter(v => v.identifiers.length !== 0)
+console.log(variables[0].defs[0])
 export { simpleParser, simpleScope, generateConstraints }

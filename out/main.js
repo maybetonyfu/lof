@@ -1,11 +1,6 @@
 import { parse } from "@typescript-eslint/parser";
 import { analyze } from "@typescript-eslint/scope-manager";
-import { AST_NODE_TYPES } from "@typescript-eslint/types";
-let system = {
-    ast: null,
-    variables: [],
-    constraints: []
-};
+import { open } from 'node:fs/promises';
 function simpleParser(code) {
     return parse(code, {
         ecmaVersion: 2020,
@@ -19,34 +14,29 @@ function simpleScope(ast) {
         sourceType: 'script',
     });
 }
-function runNode(node) {
-    switch (node.type) {
-        case AST_NODE_TYPES.VariableDeclaration:
-            return parseVariableDeclaration(node);
-        case AST_NODE_TYPES.FunctionDeclaration:
-            return parseFunctionDeclaration(node);
-    }
+let args = [...process.argv.slice(2)];
+let filename;
+if (args.length === 0) {
+    filename = "example/test.ts";
 }
-function parseVariableDeclaration(node) {
-    node.declarations.forEach(runNode);
+else {
+    filename = args[0];
 }
-function parseVariableDeclarator(node) {
-    let id = node.id;
-    if (id.hasOwnProperty('typeAnnotation')) {
-        //   Type annotation
-    }
-    if (node.init !== null) {
-        runNode(node.init);
-    }
-}
-function parseFunctionDeclaration(node) {
-}
-function generateConstraints() {
-    return [];
-}
-let program = "let x:number = 3";
-let ast = simpleParser(program);
+let fileHandle = await open(filename, 'r');
+let fileContent = await fileHandle.readFile({ encoding: "utf-8" });
+fileHandle?.close();
+let ast = simpleParser(fileContent);
 let scope = simpleScope(ast);
-let variables = scope.variables.filter(v => v.identifiers.length !== 0);
-console.log(variables[0].defs[0]);
-export { simpleParser, simpleScope, generateConstraints };
+let variables = scope.variables;
+let shorthand = variables.map(v => ({
+    id: v.$id,
+    name: v.name,
+    defs: v.defs.map(d => d.name.range),
+    refs: v.references.map(r => r.identifier.range)
+}));
+let result = {
+    ast: ast,
+    scope: shorthand
+};
+process.stdout.write(JSON.stringify(result));
+export { simpleParser, simpleScope };

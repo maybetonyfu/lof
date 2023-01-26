@@ -1,7 +1,0 @@
-{
-  "version": 3,
-  "sources": ["../../src/main.test.ts"],
-  "sourcesContent": ["import { assert, describe, expect, it } from 'vitest'\nimport {simpleParser, simpleScope, generateConstraints} from \"./main\";\n\ndescribe('Parser', () => {\n    it('parse program', () => {\n        let program = \"let x:number;\"\n        let result = simpleParser(program)\n        expect(result.type).toEqual('Program')\n    })\n\n    it('create scopes', () => {\n        let program = \"let x:number;\"\n        let result = simpleScope(simpleParser(program))\n        expect(result.variables).toBeGreaterThan(0)\n    })\n\n    it ('generate constraint', () => {\n        let constraints = generateConstraints();\n        expect(constraints.length).toBeGreaterThan(0)\n    })\n})"],
-  "mappings": ";AAAA,oBAA6C;AAC7C,kBAA6D;AAAA,IAE7D,wBAAS,UAAU,MAAM;AACrB,wBAAG,iBAAiB,MAAM;AACtB,QAAI,UAAU;AACd,QAAI,aAAS,0BAAa,OAAO;AACjC,8BAAO,OAAO,IAAI,EAAE,QAAQ,SAAS;AAAA,EACzC,CAAC;AAED,wBAAG,iBAAiB,MAAM;AACtB,QAAI,UAAU;AACd,QAAI,aAAS,6BAAY,0BAAa,OAAO,CAAC;AAC9C,8BAAO,OAAO,SAAS,EAAE,gBAAgB,CAAC;AAAA,EAC9C,CAAC;AAED,wBAAI,uBAAuB,MAAM;AAC7B,QAAI,kBAAc,iCAAoB;AACtC,8BAAO,YAAY,MAAM,EAAE,gBAAgB,CAAC;AAAA,EAChD,CAAC;AACL,CAAC;",
-  "names": []
-}

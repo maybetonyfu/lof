@@ -1,7 +1,0 @@
-{
-  "version": 3,
-  "sources": ["../../out/main.js"],
-  "sourcesContent": ["import { parse } from \"@typescript-eslint/parser\";\nimport { analyze } from \"@typescript-eslint/scope-manager\";\nfunction simpleParser(code) {\n    return parse(code, {\n        ecmaVersion: 2020,\n        sourceType: \"script\",\n        range: true,\n    });\n}\nfunction simpleScope(ast) {\n    return analyze(ast, {\n        ecmaVersion: 2020,\n        sourceType: 'script',\n    });\n}\nlet program = `\nlet x:number = 3\nlet y = x\n`;\nlet ast = simpleParser(program);\n// console.log(ast)\nconst scope = simpleScope(ast);\nconsole.log(scope.variables.filter(s => s['identifiers'].length > 0));\nexport { simpleParser, simpleScope };\n"],
-  "mappings": ";;;;;;;;;;;;;;;;;;AAAA;AAAA;AAAA;AAAA;AAAA;AAAA;AAAA,oBAAsB;AACtB,2BAAwB;AACxB,SAAS,aAAa,MAAM;AACxB,aAAO,qBAAM,MAAM;AAAA,IACf,aAAa;AAAA,IACb,YAAY;AAAA,IACZ,OAAO;AAAA,EACX,CAAC;AACL;AACA,SAAS,YAAYA,MAAK;AACtB,aAAO,8BAAQA,MAAK;AAAA,IAChB,aAAa;AAAA,IACb,YAAY;AAAA,EAChB,CAAC;AACL;AACA,IAAI,UAAU;AAAA;AAAA;AAAA;AAId,IAAI,MAAM,aAAa,OAAO;AAE9B,MAAM,QAAQ,YAAY,GAAG;AAC7B,QAAQ,IAAI,MAAM,UAAU,OAAO,OAAK,EAAE,eAAe,SAAS,CAAC,CAAC;",
-  "names": ["ast"]
-}

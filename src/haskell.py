@@ -4,16 +4,17 @@ import json
 from z3 import *
 import pprint
 from dataclasses import dataclass
-from typing import TypeAlias, NewType
-from enum import Enum
+from typing import TypeAlias, NewType, Optional, Any
 
 TypeVar: TypeAlias = DatatypeRef
+Point: TypeAlias = tuple[int, int]
+Span: TypeAlias = tuple[Point, Point]
 Fid = NewType("FunctionMetaId", str)
+Vid = NewType("VariableMetaId", int)
+Rid = NewType("RuleId", int)
 pp = pprint.PrettyPrinter(indent=2)
 
 Type = Datatype('Type')
-TypeSort = DatatypeSort('Type')
-
 Type.declare('Char')
 Type.declare('Int')
 Type.declare('Unit')
@@ -52,6 +53,15 @@ def fun_of(*ts) -> TypeVar:
             return Type.Fun(ts[0], fun_of(*ts[1:]))
 
 
+def get_location(ann: dict[str, Any]) -> Span:
+    from_point = ann.get('loc', {'from': False}).get('from', False)
+    to_point = ann.get('loc', {'to': False}).get('to', False)
+    if from_point is False or to_point is False:
+        raise ValueError("Tried to extract SrcSpan from an invalid location")
+    else:
+        return (from_point['line'], from_point['col']), (to_point['line'], to_point['col'])
+
+
 @dataclass
 class FunctionMeta:
     """ Metadata for functions during tc"""
@@ -64,7 +74,7 @@ class FunctionMeta:
 @dataclass
 class VariableMeta:
     """ Metadata for variables during tc"""
-    vid: int
+    vid: Vid
     name: str
     line: int
     col: int
@@ -77,26 +87,23 @@ class VariableMeta:
 @dataclass
 class Rule:
     """ A rule is one constraint associated with a location"""
+    rid: Rid
     clause: BoolRef
     callstack: list[Fid]
-
-
-class Context(Enum):
-    Global = 1
-    Local = 2
+    loc: Span
 
 
 class System:
     def __init__(self):
-        self.rootDir = dir
         self.project_dir = Path(__file__).parent.parent
         parser_bin = str(self.project_dir / "bin" / "haskell-tool-exe.exe")
         code_dir = str(self.project_dir / "example")
         result = run([parser_bin, code_dir], shell=True, check=True, capture_output=True)
         self.parsed_data = json.loads(result.stdout)
         self.asts = [c['ast'] for c in self.parsed_data['contents']]
-        self.solver = Solver()
+        # self.solver = Solver()
         self.variable_counter: int = 0
+        self.rule_counter: int = 0
         self.rules: list[Rule] = []
         self.variable_table: list[VariableMeta] = []
         self.function_table: list[FunctionMeta] = []
@@ -116,7 +123,7 @@ class System:
         internal_name = f'{name}.{vid}'
         self.variable_table.append(
             VariableMeta(
-                vid=vid,
+                vid=Vid(vid),
                 name=name,
                 line=line,
                 col=col,
@@ -132,24 +139,32 @@ class System:
     def lookup_variable(
             self,
             name: str,
-            line: int | None = None,
-            col: int | None = None,
-            module: str | None = None) -> TypeVar:
-        if line is None or col is None:
-            v = [v for v in self.variable_table if v.callstack == [] and v.name == name][0]
-            return Const(v.internal_name, Type)
+            line: Optional[int] = None,
+            col: Optional[int] = None,
+            callstack: Optional[list[Fid]] = None,
+            module: Optional[str] = None) -> (bool, Optional[TypeVar]):
+        if line is None or col is None or callstack == []:
+            vs = [v for v in self.variable_table if v.callstack == [] and v.name == name]
+            return (False, None) if vs == [] else (True, Const(vs[0].internal_name, Type))
         else:
-            v = [v for v in self.variable_table if v.line == line and v.col == col and v.name == name][0]
-            return Const(v.internal_name, Type)
+            vs = [v for v in self.variable_table if v.line == line and v.col == col and v.name == name]
+            return (False, None) if vs == [] else (True, Const(vs[0].internal_name, Type))
 
     def show_variables(self):
         print("Variables:")
         for v in self.variable_table:
             print(v)
+        print("")
 
     def show_functions(self):
         print("Function contexts:")
         for v in self.function_table:
+            print(v)
+        print("")
+
+    def show_rules(self):
+        print("Rules:")
+        for v in self.rules:
             print(v)
         print("")
 
@@ -165,7 +180,7 @@ class System:
                 module="",
                 line=0,
                 col=0,
-                vid=vid,
+                vid=Vid(vid),
                 is_fresh=True
             ))
         var: TypeVar = Const(internal_name, Type)
@@ -177,14 +192,16 @@ class System:
             fresh_vars.append(self.fresh(callstack))
         return fresh_vars
 
-    def add_rule(self, clause: BoolRef, callstack: list[Fid]):
-        self.rules.append(Rule(callstack=callstack, clause=clause))
+    def add_rule(self, clause: BoolRef, callstack: list[Fid], loc: Span):
+        rid = Rid(self.rule_counter)
+        self.rule_counter += 1
+        self.rules.append(Rule(callstack=callstack, clause=clause, loc=loc, rid=rid))
 
     def make_clause(self, proxies: list[TypeVar], arg_vars: list[TypeVar], function_var: TypeVar, return_var: TypeVar,
                     body: BoolRef) -> BoolRef:
-        '''Proxies: Used in the apply relation, and universal var.
-        Genereally the usiversal vars are [proxy, first var, rest vars]
-        '''
+        """Proxies: Used in the apply relation, and universal var.
+        Generally the universal vars are [proxy, first var, rest vars]
+        """
         if len(proxies) == 1 and len(arg_vars) == 1:
             proxy = proxies[0]
             arg = arg_vars[0]
@@ -204,8 +221,10 @@ class System:
                               self.make_clause(rest_proxy, rest_args, result, return_var, body)
                           ))
 
-    def solve(self):
+    def solve(self, rids: set[Rid]) -> bool:
         defs = []
+        active_rules = [r for r in self.rules if r.rid in rids]
+        solver = Solver()
         for c in self.function_table:
             function_proxies = self.fresh_n(len(c.arg_vars), [])
             universal_vars = c.arg_vars + [c.return_var]
@@ -214,7 +233,7 @@ class System:
                                 c.fid in v.callstack and v.internal_name not in universal_var_names]
             body = Exists(
                 existential_vars,
-                And([r.clause for r in self.rules if c.fid in r.callstack])
+                And([r.clause for r in active_rules if c.fid in r.callstack])
             )
             defs.append(self.make_clause(
                 proxies=function_proxies,
@@ -224,54 +243,85 @@ class System:
                 body=body
             ))
 
+        tlds = [r.clause for r in active_rules if r.callstack == []]
+        solver.add(defs)
+        solver.add(tlds)
+        return solver.check().r == 1
 
-        tlds = [r.clause for r in self.rules if r.callstack == []]
-        print('defs:')
-        print(defs)
-        print('tlds:')
-        print(tlds)
-        self.solver.add(defs)
-        self.solver.add(tlds)
-        print('=====================')
-        user_defined_vars = [v.internal_name for v in self.variable_table if not v.is_fresh]
-        if self.solver.check().r == 1:
-            m = self.solver.model()
-            for val in m:
-                if val.name() in user_defined_vars:
-                    print(val, "=", m[val])
-        else:
-            print('The code is not well-typed')
+        # print('defs:')
+        # print(defs)
+        # print('tlds:')
+        # print(tlds)
+        # self.solver.add(defs)
+        # self.solver.add(tlds)
+        # print('=====================')
+        # user_defined_vars = [v.internal_name for v in self.variable_table if not v.is_fresh]
+        # if self.solver.check().r == 1:
+        #     m = self.solver.model()
+        #     for val in m:
+        #         if val.name() in user_defined_vars:
+        #             print(val, "=", m[val])
+        # else:
+        #     print('The code is not well-typed')
 
     def type_check(self):
         for ast in self.asts:
             self.check_node(ast, Type.Unit, [])
 
     def get_name_var(self, node, callstack: list[Fid]) -> (TypeVar, str):
-        # pp.pprint(node)
+        pp.pprint(node)
         match node:
             case {'tag': 'Ident', 'contents': [ann, ident]}:
                 if ann['scope']['type'] == 'ValueBinder':
-                    var = self.make_variable(
+                    success, var = self.lookup_variable(
                         ident,
                         line=ann['loc']['from']['line'],
                         col=ann['loc']['from']['col'],
-                        module='Test',
                         callstack=callstack
                     )
-                    return var
+                    if success:
+                        return var
+                    else:
+                        var = self.make_variable(
+                            ident,
+                            line=ann['loc']['from']['line'],
+                            col=ann['loc']['from']['col'],
+                            module='Test',
+                            callstack=callstack
+                        )
+                        return var
 
                 elif ann['scope']['type'] == 'GlobalSymbol':
-                    var = self.lookup_variable(ident)
-                    return var
+                    success, var = self.lookup_variable(ident)
+                    if success:
+                        return var
+                    else:
+                        var = self.make_variable(
+                            ident,
+                            line=0,
+                            col=0,
+                            module='Test',
+                            callstack=[]
+                        )
+                        return var
 
                 elif ann['scope']['type'] == 'LocalValue':
-                    var = self.lookup_variable(
+                    success, var = self.lookup_variable(
                         ident,
                         line=ann['scope']['loc']['line'],
                         col=ann['scope']['loc']['col'],
                     )
-                    return var
-
+                    if success:
+                        return var
+                    else:
+                        var = self.make_variable(
+                            ident,
+                            line=ann['scope']['loc']['line'],
+                            col=ann['scope']['loc']['col'],
+                            module='Test',
+                            callstack=callstack
+                        )
+                        return var
                 else:
                     print(node)
                     raise NotImplementedError
@@ -290,6 +340,13 @@ class System:
             case {'tag': 'FunBind', 'contents': [ann, matches]}:
                 for m in matches:
                     self.check_node(m, term, callstack)
+
+            case {'tag': 'TypeSig', 'contents': [ann, names, sig]}:
+                sig_var = self.fresh(callstack)
+                self.check_node(sig, sig_var, callstack)
+                for name in names:
+                    name_var = self.get_name_var(name, callstack)
+                    self.add_rule(name_var == sig_var, callstack, get_location(ann))
 
             case {'tag': 'Match', 'contents': [ann, name, args, rhs, wheres]}:
                 var_fun = self.get_name_var(name, callstack)
@@ -320,33 +377,50 @@ class System:
                 var2 = self.fresh(callstack)
                 self.check_node(exp1, var1, callstack)
                 self.check_node(exp2, var2, callstack)
-                self.add_rule(apply(var1, var2, term), callstack)
+                self.add_rule(apply(var1, var2, term), callstack, get_location(ann))
 
             # Lit nodes:
             case {'tag': 'Char', 'contents': [ann, _, _]}:
-                self.add_rule(term == Type.Char, callstack)
+                self.add_rule(term == Type.Char, callstack, get_location(ann))
 
             case {'tag': 'String', 'contents': [ann, _, _]}:
-                self.add_rule(term == list_of(Type.Char), callstack)
+                self.add_rule(term == list_of(Type.Char), callstack, get_location(ann))
 
             case {'tag': 'Int', 'contents': [ann, _, _]}:
-                self.add_rule(term == Type.Int, callstack)
+                self.add_rule(term == Type.Int, callstack, get_location(ann))
 
             case {'tag': 'Frac', 'contents': [ann, _, _]}:
-                self.add_rule(term == Type.Float, callstack)
+                self.add_rule(term == Type.Float, callstack, get_location(ann))
+
+            # Types
+            case {'tag': 'TyCon', 'contents': [ann, qname]}:
+                if qname['tag'] == 'UnQual':
+                    type_literal = qname['contents'][1]['contents'][1]
+                    match type_literal:
+                        case "Int":
+                            self.add_rule(term == t_int, callstack, get_location(ann))
+                        case "Char":
+                            self.add_rule(term == t_char, callstack, get_location(ann))
+                        case "String":
+                            self.add_rule(term == list_of(t_char), callstack, get_location(ann))
+                        case "Float":
+                            self.add_rule(term == t_float, callstack, get_location(ann))
+                else:
+                    raise NotImplementedError
 
             # Patterns
             case {'tag': 'PVar', 'contents': [ann, name]}:
                 var = self.get_name_var(name, callstack)
-                self.add_rule(var == term, callstack)
+                self.add_rule(var == term, callstack, get_location(ann))
 
             # Namings
-            case {'tag': 'UnQual', 'contents': [_, name]}:
+            case {'tag': 'UnQual', 'contents': [ann, name]}:
                 var = self.get_name_var(name, callstack)
-                self.add_rule(var == term, callstack)
+                self.add_rule(var == term, callstack, get_location(ann))
 
             case _:
-                print("Unknown node type: ", node.get('type'), node)
+                print("Unknown node type: ", node.get('type'))
+                pp.pprint(node)
                 raise NotImplementedError
 
 
@@ -356,4 +430,4 @@ if __name__ == "__main__":
     system.show_variables()
     system.show_functions()
 
-    system.solve()
+    system.solve(system.rules)

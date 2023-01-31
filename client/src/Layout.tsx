@@ -16,11 +16,10 @@ const Layout = ({ left, middle, right }) => {
                 e.preventDefault()
                 if (resizer === 'left') {
                     if (e.clientX !== 0) setLeftWidth(e.clientX)
-                    myref.current.style.cursor = 'ew-resize';
+
                 } else if (resizer === 'right') {
                     if (e.clientX !== 0) setRightWidth(document.body.clientWidth
                         - e.pageX - 10)
-                    myref.current.style.cursor = 'ew-resize';
                 }
             }}>
             <div style={{ width: leftWindowSize }}>
@@ -30,9 +29,10 @@ const Layout = ({ left, middle, right }) => {
                 style={{ cursor: 'ew-resize' }}
                 onMouseDown={(e) => {
                     e.preventDefault()
+                    myref.current.style.cursor = 'ew-resize';
                     setResizer('left')
                 }}
-                className="h-full bg-black w-2"></div>
+                className="h-full bg-stone-200 w-2"></div>
             <div className="flex-grow overflow-x-auto overflow-y-hidden">
                 {middle}
             </div>
@@ -40,8 +40,10 @@ const Layout = ({ left, middle, right }) => {
                 style={{ cursor: 'ew-resize' }}
                 onMouseDown={(e) => {
                     e.preventDefault()
+                    myref.current.style.cursor = 'ew-resize';
                     setResizer('right')}}
-                className="h-full bg-black w-2"></div>
+
+                className="h-full bg-stone-200 w-2"></div>
             <div style={{ width: rightWindowSize }}>
                 {right}
             </div>

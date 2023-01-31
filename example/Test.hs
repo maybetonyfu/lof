@@ -1,5 +1,9 @@
-getLeft a b = a
-getRight a b = b
+x :: Int
 
-x = getLeft
-y = x  3 '3'
+x = 3
+
+y :: Char
+y = x
+
+
+

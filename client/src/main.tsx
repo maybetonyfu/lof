@@ -3,6 +3,6 @@ import React from 'react';
 import App from "./App"
 
 
-const container = document.getElementById('react-root');
+const container = document.body;
 const root = createRoot(container);
 root.render(<App />);

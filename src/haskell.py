@@ -4,7 +4,9 @@ import json
 from z3 import *
 import pprint
 from dataclasses import dataclass
+from pydantic import BaseModel
 from typing import TypeAlias, NewType, Optional, Any
+from src.marco import Marco, RuleSet
 
 TypeVar: TypeAlias = DatatypeRef
 Point: TypeAlias = tuple[int, int]
@@ -91,17 +93,31 @@ class Rule:
     clause: BoolRef
     callstack: list[Fid]
     loc: Span
+    implicit: bool
+
+
+# @dataclass
+class Slice(BaseModel):
+    slice_id: int
+    loc: Span
+    appears: list[int]
+
+
+# @dataclass
+class TError(BaseModel):
+    error_id: int
+    mus_list: list[RuleSet]
+    mcs_list: list[RuleSet]
+    slices: list[Slice]
 
 
 class System:
-    def __init__(self):
+    def __init__(self, code_dir):
         self.project_dir = Path(__file__).parent.parent
         parser_bin = str(self.project_dir / "bin" / "haskell-tool-exe.exe")
-        code_dir = str(self.project_dir / "example")
         result = run([parser_bin, code_dir], shell=True, check=True, capture_output=True)
         self.parsed_data = json.loads(result.stdout)
         self.asts = [c['ast'] for c in self.parsed_data['contents']]
-        # self.solver = Solver()
         self.variable_counter: int = 0
         self.rule_counter: int = 0
         self.rules: list[Rule] = []
@@ -192,10 +208,10 @@ class System:
             fresh_vars.append(self.fresh(callstack))
         return fresh_vars
 
-    def add_rule(self, clause: BoolRef, callstack: list[Fid], loc: Span):
+    def add_rule(self, clause: BoolRef, callstack: list[Fid], loc: Span, implicit=False):
         rid = Rid(self.rule_counter)
         self.rule_counter += 1
-        self.rules.append(Rule(callstack=callstack, clause=clause, loc=loc, rid=rid))
+        self.rules.append(Rule(callstack=callstack, clause=clause, loc=loc, rid=rid, implicit=implicit))
 
     def make_clause(self, proxies: list[TypeVar], arg_vars: list[TypeVar], function_var: TypeVar, return_var: TypeVar,
                     body: BoolRef) -> BoolRef:
@@ -221,17 +237,18 @@ class System:
                               self.make_clause(rest_proxy, rest_args, result, return_var, body)
                           ))
 
-    def solve(self, rids: set[Rid]) -> bool:
+    def solve(self, rids: set[int]) -> bool:
         defs = []
-        active_rules = [r for r in self.rules if r.rid in rids]
+        active_rules = [r for r in self.rules if not r.implicit and r.rid in rids] + [r for r in self.rules if r.implicit]
         solver = Solver()
+
         for c in self.function_table:
             function_proxies = self.fresh_n(len(c.arg_vars), [])
             universal_vars = c.arg_vars + [c.return_var]
             universal_var_names = [i.decl().name() for i in universal_vars]
             existential_vars = [Const(v.internal_name, Type) for v in self.variable_table if
                                 c.fid in v.callstack and v.internal_name not in universal_var_names]
-            body = Exists(
+            body = And([r.clause for r in active_rules if c.fid in r.callstack]) if existential_vars == [] else Exists(
                 existential_vars,
                 And([r.clause for r in active_rules if c.fid in r.callstack])
             )
@@ -246,6 +263,8 @@ class System:
         tlds = [r.clause for r in active_rules if r.callstack == []]
         solver.add(defs)
         solver.add(tlds)
+        print(defs)
+        print(tlds)
         return solver.check().r == 1
 
         # print('defs:')
@@ -264,12 +283,33 @@ class System:
         # else:
         #     print('The code is not well-typed')
 
-    def type_check(self):
+    def type_check(self) -> list[TError]:
         for ast in self.asts:
             self.check_node(ast, Type.Unit, [])
 
+
+        if self.solve({r.rid for r in self.rules}):
+            return []
+        else:
+            marco = Marco(rules={r.rid for r in self.rules if not r.implicit}, sat_fun=self.solve)
+            marco.run()
+            marco.analyse()
+            t_errors = []
+            for i, island in enumerate(marco.islands):
+                slices = []
+                for (ruleId, appears) in island.rule_likelihood:
+                    rule = [r for r in self.rules if r.rid == ruleId][0]
+                    slice = Slice(slice_id=rule.rid, loc=rule.loc, appears=appears)
+                    slices.append(slice)
+                t_error = TError(
+                    error_id=i,
+                    mus_list=island.mus_list,
+                    mcs_list=island.mcs_list,
+                    slices=slices)
+                t_errors.append(t_error)
+            return t_errors
+
     def get_name_var(self, node, callstack: list[Fid]) -> (TypeVar, str):
-        pp.pprint(node)
         match node:
             case {'tag': 'Ident', 'contents': [ann, ident]}:
                 if ann['scope']['type'] == 'ValueBinder':
@@ -326,31 +366,32 @@ class System:
                     print(node)
                     raise NotImplementedError
 
-    def check_node(self, node, term: TypeVar, callstack: list[Fid]):
+    def check_node(self, node, term: TypeVar, callstack: list[Fid], implicit=False):
         match node:
             case {'tag': 'Module', 'contents': [ann, _, _, _, decls]}:
                 for decl in decls:
-                    self.check_node(decl, term, callstack)
+                    self.check_node(decl, term, callstack, implicit=implicit)
 
             case {'tag': 'PatBind', 'contents': [ann, pat, rhs, _]}:
                 var = self.fresh(callstack)
-                self.check_node(pat, var, callstack)
-                self.check_node(rhs, var, callstack)
+                self.check_node(pat, var, callstack, implicit=True)
+                self.check_node(rhs, var, callstack, implicit=implicit)
 
             case {'tag': 'FunBind', 'contents': [ann, matches]}:
                 for m in matches:
-                    self.check_node(m, term, callstack)
+                    self.check_node(m, term, callstack, implicit=implicit)
 
             case {'tag': 'TypeSig', 'contents': [ann, names, sig]}:
                 sig_var = self.fresh(callstack)
-                self.check_node(sig, sig_var, callstack)
+                self.check_node(sig, sig_var, callstack, implicit=implicit)
                 for name in names:
                     name_var = self.get_name_var(name, callstack)
-                    self.add_rule(name_var == sig_var, callstack, get_location(ann))
+                    self.add_rule(name_var == sig_var, callstack, get_location(ann), implicit=True)
 
             case {'tag': 'Match', 'contents': [ann, name, args, rhs, wheres]}:
                 var_fun = self.get_name_var(name, callstack)
-                fun_name = var_fun.decl().name()
+                # pp.pprint(ann)
+                fun_name = var_fun.decl().name() + '.' + str(ann['loc']['from']['line'])
 
                 callstack = [*callstack, fun_name]
 
@@ -359,38 +400,38 @@ class System:
 
                 self.make_function(fid=Fid(fun_name), function_var=var_fun, arg_vars=var_args, return_var=var_rhs)
                 for arg, var_arg in zip(args, var_args):
-                    self.check_node(arg, var_arg, callstack)
-                self.check_node(rhs, var_rhs, callstack)
+                    self.check_node(arg, var_arg, callstack, implicit=implicit)
+                self.check_node(rhs, var_rhs, callstack, implicit=implicit)
 
             case {'tag': 'UnGuardedRhs', 'contents': [ann, exp]}:
-                self.check_node(exp, term, callstack)
+                self.check_node(exp, term, callstack, implicit=implicit)
 
             # Exp types:
             case {'tag': 'Lit', 'contents': [ann, lit]}:
-                self.check_node(lit, term, callstack)
+                self.check_node(lit, term, callstack, implicit=implicit)
 
             case {'tag': 'Var', 'contents': [ann, qname]}:
-                self.check_node(qname, term, callstack)
+                self.check_node(qname, term, callstack, implicit=implicit)
 
             case {'tag': 'App', 'contents': [ann, exp1, exp2]}:
                 var1 = self.fresh(callstack)
                 var2 = self.fresh(callstack)
-                self.check_node(exp1, var1, callstack)
-                self.check_node(exp2, var2, callstack)
-                self.add_rule(apply(var1, var2, term), callstack, get_location(ann))
+                self.check_node(exp1, var1, callstack, implicit=implicit)
+                self.check_node(exp2, var2, callstack, implicit=implicit)
+                self.add_rule(apply(var1, var2, term), callstack, get_location(ann), implicit=implicit)
 
             # Lit nodes:
             case {'tag': 'Char', 'contents': [ann, _, _]}:
-                self.add_rule(term == Type.Char, callstack, get_location(ann))
+                self.add_rule(term == Type.Char, callstack, get_location(ann), implicit=implicit)
 
             case {'tag': 'String', 'contents': [ann, _, _]}:
-                self.add_rule(term == list_of(Type.Char), callstack, get_location(ann))
+                self.add_rule(term == list_of(Type.Char), callstack, get_location(ann), implicit=implicit)
 
             case {'tag': 'Int', 'contents': [ann, _, _]}:
-                self.add_rule(term == Type.Int, callstack, get_location(ann))
+                self.add_rule(term == Type.Int, callstack, get_location(ann), implicit=implicit)
 
             case {'tag': 'Frac', 'contents': [ann, _, _]}:
-                self.add_rule(term == Type.Float, callstack, get_location(ann))
+                self.add_rule(term == Type.Float, callstack, get_location(ann), implicit=implicit)
 
             # Types
             case {'tag': 'TyCon', 'contents': [ann, qname]}:
@@ -398,25 +439,28 @@ class System:
                     type_literal = qname['contents'][1]['contents'][1]
                     match type_literal:
                         case "Int":
-                            self.add_rule(term == t_int, callstack, get_location(ann))
+                            self.add_rule(term == t_int, callstack, get_location(ann), implicit=implicit)
                         case "Char":
-                            self.add_rule(term == t_char, callstack, get_location(ann))
+                            self.add_rule(term == t_char, callstack, get_location(ann), implicit=implicit)
                         case "String":
-                            self.add_rule(term == list_of(t_char), callstack, get_location(ann))
+                            self.add_rule(term == list_of(t_char), callstack, get_location(ann), implicit=implicit)
                         case "Float":
-                            self.add_rule(term == t_float, callstack, get_location(ann))
+                            self.add_rule(term == t_float, callstack, get_location(ann), implicit=implicit)
                 else:
                     raise NotImplementedError
 
             # Patterns
             case {'tag': 'PVar', 'contents': [ann, name]}:
                 var = self.get_name_var(name, callstack)
-                self.add_rule(var == term, callstack, get_location(ann))
+                self.add_rule(var == term, callstack, get_location(ann), implicit=implicit)
+
+            case {'tag': 'PLit', 'contents': [ann, _, lit]}:
+                self.check_node(lit, term, callstack, implicit)
 
             # Namings
             case {'tag': 'UnQual', 'contents': [ann, name]}:
                 var = self.get_name_var(name, callstack)
-                self.add_rule(var == term, callstack, get_location(ann))
+                self.add_rule(var == term, callstack, get_location(ann), implicit=implicit)
 
             case _:
                 print("Unknown node type: ", node.get('type'))
@@ -425,9 +469,13 @@ class System:
 
 
 if __name__ == "__main__":
-    system = System()
-    system.type_check()
-    system.show_variables()
-    system.show_functions()
+    system = System(code_dir=str(Path(__file__).parent.parent / "example"))
+    e = system.type_check()
+    print(e)
+    # pp.pprint(system.rules)
 
-    system.solve(system.rules)
+    # system.show_variables()
+    # system.show_functions()
+    # marco = Marco(rules={r.rid for r in system.rules}, sat_fun=system.solve)
+    # marco.run()
+    # marco.analyse()

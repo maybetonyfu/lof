@@ -1,9 +1,3 @@
-x :: Int
+x a = a
 
-x = 3
-
-y :: Char
-y = x
-
-
-
+u z = x z

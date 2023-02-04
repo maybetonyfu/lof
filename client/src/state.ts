@@ -1,32 +1,6 @@
 import {create} from 'zustand'
+import {Hole, TypeError, RuleSet} from "./global";
 
-interface RuleSet {
-    setId: number,
-    rules: number[]
-}
-
-interface Slice {
-    slice_id: number,
-    loc: [[number, number], [number, number]],
-    appears: number[]
-}
-
-interface TypeError {
-    error_id: number,
-    mus_list: RuleSet[],
-    mcs_list: RuleSet[],
-    slices: Slice[]
-}
-
-interface Hole {
-    original: string,
-    hole_id: number,
-    loc: [[number, number], [number, number]],
-    signature: string,
-    kind: 'Type hole' | 'Type wildcard' | 'Rename',
-
-    error_id: number
-}
 
 const useAppStore = create((set, get) => ({
     fileList: [],
@@ -37,7 +11,7 @@ const useAppStore = create((set, get) => ({
     fix: null,
     highlights: [],
     replacements: [],
-    readFile: async (file) => {
+    readFile: async (file: string) => {
         let response = await fetch('/api/file/' + file)
         let file_text: string = await response.text()
         set({
@@ -45,7 +19,7 @@ const useAppStore = create((set, get) => ({
             buffer: file_text
         })
     },
-    writeFile: async (content) => {
+    writeFile: async (content: string) => {
         let openedFile = (get() as any).openedFile
         let response = await fetch('/api/file/' + openedFile, {
             method: "POST",
@@ -80,15 +54,15 @@ const useAppStore = create((set, get) => ({
         let errors: TypeError[] = (get() as any).errors
         let currentError = errors
             .find(error => error.mcs_list.map(mcs => mcs.setId).includes(fix))
-        let currentMcs: RuleSet = currentError.mcs_list.find(f => f.setId == fix)
+        let currentMcs: RuleSet = currentError?.mcs_list.find(f => f.setId == fix) || {setId: -1, rules: []}
         let sliceIds = currentMcs.rules
         let slices =
-            currentError.slices
+            currentError?.slices
                 .filter(s => sliceIds.includes(s.slice_id))
                 .map(s => s.loc)
         let replaces = errors.flatMap(error => {
-            if (error.error_id === currentError.error_id) {
-                return slices.map(slice => ({error_id: error.error_id, slice}))
+            if (error.error_id === currentError?.error_id) {
+                return slices?.map(slice => ({error_id: error.error_id, slice}))
             } else {
                 let sliceIds = error.mcs_list[0].rules
                 let slices = error.slices.filter(s => sliceIds.includes(s.slice_id)).map(s => s.loc)
@@ -107,7 +81,7 @@ const useAppStore = create((set, get) => ({
             })
         })
         let holes: Hole[] = await response.json()
-        holes = holes.filter(hole => hole.error_id === currentError.error_id)
+        holes = holes.filter((hole: Hole) => hole.error_id === currentError?.error_id)
         set({replacements: holes})
     }
 }))

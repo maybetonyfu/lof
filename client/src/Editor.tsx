@@ -3,7 +3,7 @@ import {basicSetup, EditorView} from "codemirror";
 import {EditorState, StateEffect, StateField, RangeSet, StateEffectType} from "@codemirror/state";
 import {Decoration, keymap} from "@codemirror/view";
 import useAppStore from "./state"
-
+import Box from '@mui/material/Box';
 export default () => {
     let dom = useRef(null)
     let document = useAppStore((state: any) => state.buffer)
@@ -22,14 +22,14 @@ export default () => {
     });
 
     const hlEffectRef = useRef(hlEffect)
-    const saveDocument = (view) => {
+    const saveDocument = (view: any) => {
         writeFile(view.state.doc.sliceString(0, view.state.doc.length))
             .then(type_check)
         return true
     }
 
     let defaultTheme = EditorView.theme({
-        "&": {height: "100%"}
+        "&": {height: "100%", fontSize: '18px'}
     })
 
     useEffect(() => {
@@ -90,7 +90,7 @@ export default () => {
     }, [document])
 
     useEffect(() => {
-        if (view == null) return
+        if (view == null) return;
         let doc = view.state.doc;
         let hlEffects = highlights.map((hl) => {
             let [fromL, fromC] = hl[0]
@@ -98,14 +98,16 @@ export default () => {
             const startPos = doc.line(fromL).from + fromC - 1
             const endPos = doc.line(toL).from + toC - 1
             return hlEffectRef.current.of({ from: startPos, to: endPos, marker: `marker0` })
-        })
+        });
 
-        view.dispatch({ effects: hlEffects })
+        (view as any).dispatch({ effects: hlEffects })
     }, [highlights])
 
     return (
-        <div ref={dom} id="editor" className="h-full ">
-        </div>
+        <Box ref={dom} id="editor" sx={{height: '100%'}} />
+
+        // <div ref={dom} id="editor" className="h-full ">
+        // </div>
     )
 
 }

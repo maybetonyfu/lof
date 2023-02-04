@@ -5,47 +5,80 @@ Type.declare('Char')
 Type.declare('Int')
 Type.declare('Unit')
 Type.declare('Float')
-Type.declare('Fun', ('arg', Type), ('ret', Type))
+Type.declare('Function', ('head', Type), ('tail', Type))
 Type = Type.create()
 
-# GetLeft x y = x
-# getLeft
+t_char = Type.Char
+t_int = Type.Int
+t_unit = Type.Unit
+t_float = Type.Float
+fun = Type.Function
 
-apply = Function('apply', Type, Type, Type, BoolSort())
-getleft, getright = Consts('getleft getright', Type)
+getleft, getleft_1 = Consts('getleft getleft_1', Type)
 f1, f2, f3, f4, f5 = Consts('f1 f2 f3 f4 f5', Type)
 x, y, z, u, v, w = Consts('x y z u v w', Type)
-id_func = Const('id', Type)
+a, b, c, d, e, f = Consts('a b c d e f', Type)
+
 if __name__ == "__main__":
     s = Solver()
+    is_func = Function('is_func', Type, Type, BoolSort())
+    id_func = Const('id_func', Type)
+    id_def = ForAll(
+        [a],
+        Implies(
+            is_func(a, id_func),
+            ForAll([b, c], Implies(a == fun(b, c), b == c))
+        ))
+
+    getleft_def = ForAll(
+        [a],
+        Implies(
+            is_func(a, getleft),
+            ForAll([b, c], Implies(a == fun(b, c), ForAll([d, e], Implies(c == fun(d, e), e == b))))
+        )
+    )
+    #
+    # s.add(id_def)
     s.add([
-        ForAll([f1, x, y],
-               Implies(
-                   And(f1 == getleft, apply(f1, x, y)),
-                   ForAll([f2, z, w],
-                          Implies(
-                              And(f2 == y, apply(f2, z, w)),
-                              x == w
-                          )
-                          )
-               )
-        ),
-        ForAll([f1, x, y],
-               Implies(
-                   And(f1 == getright, apply(f1, x, y)),
-                   ForAll([f2, z, w],
-                          Implies(
-                              And(f2 == y, apply(f2, z, w)),
-                              z == w
-                          )
-                          )
-               )
-               ),
-        apply(getleft, Type.Int, x),
-        apply(x, Type.Char, z),
-        apply(getright, Type.Int, w),
-        apply(w, Type.Char, u),
+        id_def,
+
+
+        ForAll(f, Implies(
+            is_func(f, id_func),
+            Or(f == x, f == y)
+
+        )),
+        ForAll(f, Implies(
+            is_func(f, getleft),
+            Or(f == z)
+        )),
+        is_func(x, id_func),
+        is_func(y, id_func),
+
+        x == fun(t_int, t_int),
+        y == fun(t_char, t_char),
+        getleft_def,
+        is_func(z, getleft),
+        d == z,
+        d == fun(t_char, a),
+        a == fun(b, c)
 
     ])
+
+
+
+    # s.add([
+    #     getleft_def,
+    #
+    #     # z == fun(t_float, fun(u, t_int))
+    # ])
+
     print(s.check())
-    print(s.model())
+
+    if s.check().r == 1:
+        m = s.model()
+        # print(m)
+        # print(m.eval(is_func(y, id_func)))
+        for d in m:
+            if d.name() not in ['is_func', 'head', 'tail']:
+                print(d, '::', m[d])

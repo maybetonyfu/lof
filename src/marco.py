@@ -120,7 +120,8 @@ class Marco:
                 rule_likelihood.append((rule, rule_appears_in))
 
             self.islands = [
-                Island(mus_list=mus_list, mcs_list=mcs_list, rule_likelihood=rule_likelihood)] + self.islands
+                               Island(mus_list=mus_list, mcs_list=mcs_list,
+                                      rule_likelihood=rule_likelihood)] + self.islands
 
     def show(self):
         print(f"Process finished after {self.loop_counter} iterations")

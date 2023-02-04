@@ -1,7 +1,11 @@
 import React, {useEffect} from "react"
 import useAppStore from "./state";
 import { WrenchIcon, ExclamationTriangleIcon } from '@heroicons/react/24/outline'
+import {RuleSet, TypeError} from "./global";
+import Card from "@mui/material/Card"
+import Paper from "@mui/material/Paper"
 
+import Box from "@mui/material/Box"
 const Hint = ({replacement} : any) => {
     if (replacement.kind == "Type hole") {
         return (<div>
@@ -25,7 +29,7 @@ const Fix = ({fix, slices, number}: any) => {
     let setHighlight = useAppStore((state:any) => state.setHighlight)
     let active = activeFix === fix.setId
     let rules = fix.rules
-    let activeSlices = slices.filter(slice => rules.includes(slice.slice_id))
+    let activeSlices = slices.filter((slice: any) => rules.includes(slice.slice_id))
 
     return (
         <div className={'flex flex-col rounded-sm py-0.5 px-1 cursor-pointer my-0.5 ' + (active ? 'bg-amber-100' : 'bg-stone-100')}>
@@ -43,7 +47,7 @@ const Fix = ({fix, slices, number}: any) => {
             }
             <div>
                 {
-                    replacements.map(r => activeFix == fix.setId ? <Hint replacement={r} key={r.hole_id}/> : null)
+                    replacements.map((r: any) => activeFix == fix.setId ? <Hint replacement={r} key={r.hole_id}/> : null)
                 }
             </div>
 
@@ -62,11 +66,11 @@ const Error = ({error} : any) => {
         <div className={"flex flex-col bg-white rounded-sm p-1"}>
             <div>The type error contains {error.mus_list.length} minimal conflicts:</div>
             <div className={'flex'}>
-            {error.mus_list.map((mus, i) => {
+            {error.mus_list.map((mus: RuleSet, i: number) => {
                 let slices = error.slices
                 let rules = mus.rules
-                let activeSlices = slices.filter(slice => rules.includes(slice.slice_id))
-                let locations = activeSlices.map(slice => slice.loc)
+                let activeSlices = slices.filter((slice: any) => rules.includes(slice.slice_id))
+                let locations = activeSlices.map((slice: any) => slice.loc)
                 return (<div
                 onClick={_ => {
                     setHighlight(locations)
@@ -80,7 +84,7 @@ const Error = ({error} : any) => {
 
         <div className={'font-bold mt-2'}>Possible Fixes:</div>
         <div className={"flex flex-col bg-white rounded-sm p-1"}>
-            {error.mcs_list.map((fix, i) => <Fix fix={fix} number={i} slices={error.slices} key={i}/>)}
+            {error.mcs_list.map((fix:RuleSet, i:number) => <Fix fix={fix} number={i} slices={error.slices} key={i}/>)}
         </div>
 
     </div>)
@@ -91,9 +95,9 @@ const Debugger = () => {
     if (isLoading) {
         return <div>Type checking in progress</div>
     }
-    return (<div className="p-2">
-        {errors.map(error => <Error error={error} key={error.error_id}/>)}
-    </div>)
+    return (<Box sx={{bgcolor : 'grey.100', height: '100%'}}>
+        {errors.map((error: TypeError) => <Paper sx={{width: 128, height: 128}} elevation={1}  key={error.error_id}/>)}
+    </Box>)
 };
 
 export default Debugger

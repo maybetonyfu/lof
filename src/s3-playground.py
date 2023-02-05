@@ -34,38 +34,56 @@ if __name__ == "__main__":
         [a],
         Implies(
             is_func(a, getleft),
-            ForAll([b, c], Implies(a == fun(b, c), ForAll([d, e], Implies(c == fun(d, e), e == b))))
+            ForAll([b, c], Implies(a == fun(b, c),
+                                   And(
+                                       c == fun(Const("fa", Type), Const("fb", Type)),
+                                       ForAll(d,
+                                              Implies(is_func(d, c),
+                                                      ForAll([e, f], Implies(d == fun(e, f), f == b))
+                                                      )
+                                              )
+
+                                   )
+                    ))
         )
     )
     #
     # s.add(id_def)
     s.add([
         id_def,
+        #
+        # ForAll(f, Implies(
+        #     is_func(f, id_func),
+        #     Or(f == x, f == y)
+        #
+        # )),
+        # ForAll(f, Implies(
+        #     is_func(f, getleft),
+        #     Or(f == z)
+        # )),
+        ForAll(f, Not(Or(
+            is_func(t_int, f),
+            is_func(t_float, f),
+            is_func(t_char, f),
+            is_func(t_unit, f),
 
-
-        ForAll(f, Implies(
-            is_func(f, id_func),
-            Or(f == x, f == y)
-
-        )),
-        ForAll(f, Implies(
-            is_func(f, getleft),
-            Or(f == z)
-        )),
+        ))),
         is_func(x, id_func),
         is_func(y, id_func),
-
+        #
         x == fun(t_int, t_int),
         y == fun(t_char, t_char),
         getleft_def,
         is_func(z, getleft),
-        d == z,
-        d == fun(t_char, a),
-        a == fun(b, c)
 
+        # d == z,
+        z == fun(t_char, a),
+        is_func(d, a),
+        d == fun(t_int, c),
+        is_func(e, a),
+        e == fun(t_float, f),
+        getleft == fun(u, fun(v, w))
     ])
-
-
 
     # s.add([
     #     getleft_def,

@@ -1,11 +1,10 @@
 from subprocess import run
 from pathlib import Path
 import json
-from z3 import *
+# from z3 import *
 import pprint
 from dataclasses import dataclass
 from pydantic import BaseModel
-from typing import TypeAlias, NewType, Optional, Any
 from src.marco import Marco, RuleSet
 from src.haskell_types import *
 
@@ -14,8 +13,12 @@ Span: TypeAlias = tuple[Point, Point]
 Fid = NewType("FunctionMetaId", str)
 Vid = NewType("VariableMetaId", int)
 Rid = NewType("RuleId", int)
-pp = pprint.PrettyPrinter(indent=2)
+pp = pprint.PrettyPrinter(indent=2).pprint
 
+
+def pretty(node, indent=0):
+    print(' ' * indent, node['tag'])
+    pretty(node['contents'][1], indent + 2)
 
 # def fun_of(*ts) -> TypeVar:
 #     """ Make a function type of type Fun(t[0], t[1], ...)"""
@@ -193,29 +196,47 @@ class System:
         self.rule_counter += 1
         self.rules.append(Rule(callstack=callstack, clause=clause, loc=loc, rid=rid, implicit=implicit))
 
-    def make_clause(self, proxies: list[TypeVar], arg_vars: list[TypeVar], function_var: TypeVar, return_var: TypeVar,
-                    body: BoolRef) -> BoolRef:
-        """Proxies: Used in the apply relation, and universal var.
-        Generally the universal vars are [proxy, first var, rest vars]
-        """
-        if len(proxies) == 1 and len(arg_vars) == 1:
-            proxy = proxies[0]
-            arg = arg_vars[0]
-            return ForAll([proxy, arg, return_var],
-                          Implies(
-                              And(proxy == function_var, apply(proxy, arg, return_var)),
-                              body
-                          )
-                          )
+    # ForAll(
+    #     [a],
+    #     Implies(
+    #         is_func(a, getleft),
+    #         ForAll([b, c], Implies(a == fun(b, c),
+    #                                And(
+    #                                    c == fun(Const("fa", Type), Const("fb", Type)),
+    #                                    ForAll(d,
+    #                                           Implies(is_func(d, c),
+    #                                                   ForAll([e, f], Implies(d == fun(e, f), f == b))
+    #                                                   )
+    #                                           )
+    #
+    #                                )
+    #                                ))
+    #     )
+    # )
+    def generate_clause(self,  arg_vars: list[TypeVar], body: BoolRef, fun_ref: TypeVar):
+        if len(arg_vars) == 2:
+            [arg1, arg2] = arg_vars
+            args_rest = []
         else:
-            [proxy, *rest_proxy] = proxies
-            [arg, *rest_args] = arg_vars
-            result = self.fresh([])
-            return ForAll([proxy, arg, result],
-                          Implies(
-                              And(proxy == function_var, apply(proxy, arg, result)),
-                              self.make_clause(rest_proxy, rest_args, result, return_var, body)
-                          ))
+            [arg1, *args_rest] = arg_vars
+            arg2 = self.fresh([])
+        proxy = self.fresh([])
+        implicant = body if args_rest == [] else self.generate_clause(args_rest, body, arg2)
+
+        clause = ForAll(
+                proxy,
+                Implies(
+                    is_func(proxy, fun_ref),
+                    ForAll([arg1, arg2], Implies(
+                        proxy == fun(arg1, arg2),
+                        And(
+                            # Potentially add correction
+                            implicant
+                        )
+                    ))
+                )
+            )
+        return clause
 
     def solve(self, rids: set[int]) -> bool:
         defs = []
@@ -224,7 +245,6 @@ class System:
         solver = Solver()
 
         for c in self.function_table:
-            function_proxies = self.fresh_n(len(c.arg_vars), [])
             universal_vars = c.arg_vars + [c.return_var]
             universal_var_names = [i.decl().name() for i in universal_vars]
             existential_vars = [Const(v.internal_name, Type) for v in self.variable_table if
@@ -233,51 +253,24 @@ class System:
                 existential_vars,
                 And([r.clause for r in active_rules if c.fid in r.callstack])
             )
-            defs.append(self.make_clause(
-                proxies=function_proxies,
-                arg_vars=c.arg_vars,
-                function_var=c.function_var,
-                return_var=c.return_var,
-                body=body
-            ))
+            clause =self.generate_clause([*c.arg_vars, c.return_var], body, c.function_var)
+            print(clause)
+            defs.append(clause)
 
         tlds = [r.clause for r in active_rules if r.callstack == []]
         solver.add(defs)
         solver.add(tlds)
-
+        print(tlds)
         if solver.check().r == 1:
             model = solver.model()
-            # print(model)
-            self.inference(solver, model, rules=[r.clause for r in active_rules])
-            # for r in active_rules:
-            #     print('rules', r)
-            #     if r.clause.decl().name() == 'apply':
-            #         print('arg: ', r.clause.arg(0))
-            print(solver.proof())
+            print(model)
             return True
         else:
             return False
 
-        # print('defs:')
-        # print(defs)
-        # print('tlds:')
-        # print(tlds)
-        # self.solver.add(defs)
-        # self.solver.add(tlds)
-        # print('=====================')
-        # user_defined_vars = [v.internal_name for v in self.variable_table if not v.is_fresh]
-        # if self.solver.check().r == 1:
-        #     m = self.solver.model()
-        #     for val in m:
-        #         if val.name() in user_defined_vars:
-        #             print(val, "=", m[val])
-        # else:
-        #     print('The code is not well-typed')
-
     def type_check(self) -> list[TError]:
         for ast in self.asts:
             self.check_node(ast, Type.Unit, [])
-
         if self.solve({r.rid for r in self.rules}):
             print('sat')
             return []
@@ -301,8 +294,9 @@ class System:
             return t_errors
 
     def get_name_var(self, node, callstack: list[Fid]) -> (TypeVar, str):
-        # if node['contents'][1]
+        # pp(node)
         [ann, ident] = node['contents']
+        print('ident is : ', ident)
         if ident[0] == "_":
             print("Type hole")
             hole_var = self.fresh(callstack=callstack)
@@ -388,6 +382,7 @@ class System:
                     for arg, var_arg in zip(args, var_args):
                         self.check_node(arg, var_arg, callstack, implicit=implicit)
                     self.check_node(rhs, var_rhs, callstack, implicit=implicit)
+
             # case {'tag': 'Match', 'contents': [ann, name, args, rhs, wheres]}:
             #     var_fun = self.get_name_var(name, callstack)
             #     # pp.pprint(ann)
@@ -409,8 +404,6 @@ class System:
                     name_var = self.get_name_var(name, callstack)
                     self.add_rule(name_var == sig_var, callstack, get_location(ann), implicit=True)
 
-
-
             case {'tag': 'UnGuardedRhs', 'contents': [ann, exp]}:
                 self.check_node(exp, term, callstack, implicit=implicit)
 
@@ -429,9 +422,27 @@ class System:
             case {'tag': 'App', 'contents': [ann, exp1, exp2]}:
                 var1 = self.fresh(callstack, is_func=True)
                 var2 = self.fresh(callstack)
-                self.check_node(exp1, var1, callstack, implicit=implicit)
+
                 self.check_node(exp2, var2, callstack, implicit=implicit)
-                self.add_rule(apply(var1, var2, term), callstack, get_location(ann), implicit=implicit)
+                self.add_rule(var1 == fun(var2, term),callstack=callstack, loc=get_location(ann))
+                if exp1['tag'] == "Var":
+                    print('Exp1 is var')
+                    name = self.get_name_var(node=exp1['contents'][1]['contents'][1], callstack=callstack)
+                    self.add_rule(is_func(var1, name),callstack=callstack, loc=get_location(ann))
+                elif exp1['tag'] == "App":
+                    name = self.fresh(callstack)
+                    self.add_rule(is_func(var1, name), callstack=callstack, loc=get_location(ann))
+                    self.check_node(exp1, name, callstack, implicit=implicit)
+
+                # else:
+                # if exp1['tag'] == 'UnQual':
+                #     pp(exp1['contents'])
+                #     var1 = self.fresh(callstack, is_func=True)
+                #     var2 = self.fresh(callstack)
+                #     self.check_node(exp1, var1, callstack, implicit=implicit)
+                #     self.check_node(exp2, var2, callstack, implicit=implicit)
+                # self.add_rule(is_func())
+                # self.add_rule(apply(var1, var2, term), callstack, get_location(ann), implicit=implicit)
 
             # Lit nodes:
             case {'tag': 'Char', 'contents': [ann, _, _]}:
@@ -488,10 +499,9 @@ class System:
                     case "ExprHole":
                         raise NotImplementedError("ExprHole")
 
-
             case _:
                 print("Unknown node type: ", node.get('type'))
-                pp.pprint(node)
+                pp(node)
                 raise NotImplementedError
 
     def inference(self, s: Solver, model: ModelRef, rules: list[BoolRef]):
@@ -508,11 +518,10 @@ class System:
         #             print(r.decl().name(), "arg(", i, ") ->", r.arg(i))
 
 
-
 if __name__ == "__main__":
     system = System(code_dir=str(Path(__file__).parent.parent / "example"))
     e = system.type_check()
-    pp.pprint(e)
+    pp(e)
     # pp.pprint(system.rules)
 
     # system.show_variables()
@@ -520,3 +529,4 @@ if __name__ == "__main__":
     # marco = Marco(rules={r.rid for r in system.rules}, sat_fun=system.solve)
     # marco.run()
     # marco.analyse()
+

@@ -1,3 +1,4 @@
-x a = a
+x a b = a
 
-u z = x z
+u = x 4.3
+v = u 4

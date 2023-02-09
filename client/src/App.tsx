@@ -19,7 +19,7 @@ const App = () => {
                 <Grid xs={'auto'}>
                     <Sidebar/>
                 </Grid>
-                <Grid xs={8}>
+                <Grid xs={6}>
                     <Editor/>
                 </Grid>
                 <Grid xs>
@@ -31,14 +31,3 @@ const App = () => {
 };
 
 export default App
-
-// <div>
-// <Layout
-// left={<Sidebar/>}
-// middle={(<div className="h-full flex flex-col">
-//     <Editor></Editor>
-// </div>)}
-// right={<Debugger/>}
-// >
-// </Layout>
-// </div>

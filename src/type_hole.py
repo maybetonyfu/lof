@@ -5,9 +5,6 @@ from pathlib import Path
 from os import linesep
 import re
 
-class Replace(BaseModel):
-    error_id: int
-    slice: Span
 
 
 def sort_loc(locs: list[Replace]):
@@ -16,13 +13,6 @@ def sort_loc(locs: list[Replace]):
 
 
 
-class Hole(BaseModel):
-    original: str
-    hole_id: int
-    loc: Span
-    signature: str
-    kind: str
-    error_id: int
 
     def set_original(self, text: str):
         self.original = text

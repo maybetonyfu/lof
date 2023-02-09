@@ -3,46 +3,64 @@ from fastapi.responses import HTMLResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pathlib import Path
 from src.haskell import System, TError, Span
-from src.type_hole import Hole, TypeHoles, Replace
 from pydantic import BaseModel
 
 app = FastAPI()
-base_dir = Path(__file__).parent.parent / "example"
+
+items = {}
+
+@app.on_event("startup")
+async def startup_event():
+    base_dir = Path(__file__).parent.parent / "example"
+    system = System(str(base_dir))
+    items["system"] = system
+    items['base_dir'] = base_dir
 
 
 @app.get("/api/dir")
 def get_dir():
-    return [str(p.relative_to(base_dir)) for p in base_dir.rglob("*.hs")]
+    return [str(p.relative_to(items['base_dir'])) for p in items['base_dir'].rglob("*.hs")]
 
 
 @app.get("/api/typecheck")
 def typecheck() -> list[TError]:
-    system = System(str(base_dir))
+    system = items["system"]
     result = system.type_check()
     return result
 
 
-class TypeHoleRequest(BaseModel):
-    file: str
-    replaces: list[Replace]
+class Replace(BaseModel):
+    error_id: int
+    slice: Span
 
 
-@app.post("/api/typehole")
-def type_hole(hole_request: TypeHoleRequest) -> list[Hole]:
-    type_holes = TypeHoles(replaces=hole_request.replaces, file=hole_request.file)
-    return type_holes.execute()
+class Hole(BaseModel):
+    original: str
+    hole_id: int
+    loc: Span
+    signature: str
+    kind: str
+    error_id: int
+
+
+
+@app.get("/api/suggestion/{error_id}/{mcs_id}")
+def suggestion(error_id: int, mcs_id: int) -> list[str]:
+    system = items["system"]
+    suggestions = system.inference(error_id, mcs_id)
+    return suggestions
 
 
 @app.get('/api/file/{file_path:path}')
 def open_file(file_path: str):
-    text = Path(base_dir / file_path).read_text()
+    text = Path(items['base_dir'] / file_path).read_text()
     return PlainTextResponse(content=text)
 
 
 @app.post('/api/file/{file_path:path}', response_class=PlainTextResponse)
 def save_file(file_path: str, file_content: str = Body()):
-    Path(base_dir / file_path).write_text(file_content)
-    text = Path(base_dir / file_path).read_text()
+    Path(items['base_dir'] / file_path).write_text(file_content)
+    text = Path(items['base_dir'] / file_path).read_text()
     return text
 
 

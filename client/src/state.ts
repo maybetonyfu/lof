@@ -10,7 +10,7 @@ const useAppStore = create((set, get) => ({
     errors: [],
     fix: null,
     highlights: [],
-    replacements: [],
+    suggestions: [],
     readFile: async (file: string) => {
         let response = await fetch('/api/file/' + file)
         let file_text: string = await response.text()
@@ -38,7 +38,7 @@ const useAppStore = create((set, get) => ({
     },
 
     type_check: async () => {
-        set({isLoading: true, highlights: [], fix: null})
+        set({isLoading: true, highlights: [], fix: null, suggestions: []})
         let response = await fetch('/api/typecheck')
         let typeErrors: TypeError[] = await response.json()
         set({isLoading: false, errors: typeErrors})
@@ -49,7 +49,7 @@ const useAppStore = create((set, get) => ({
     },
 
     chooseFix: async (fix: number) => {
-        set({highlights: [], replacements: []})
+        set({highlights: [], suggestions: []})
         set({fix})
         let errors: TypeError[] = (get() as any).errors
         let currentError = errors
@@ -60,29 +60,12 @@ const useAppStore = create((set, get) => ({
             currentError?.slices
                 .filter(s => sliceIds.includes(s.slice_id))
                 .map(s => s.loc)
-        let replaces = errors.flatMap(error => {
-            if (error.error_id === currentError?.error_id) {
-                return slices?.map(slice => ({error_id: error.error_id, slice}))
-            } else {
-                let sliceIds = error.mcs_list[0].rules
-                let slices = error.slices.filter(s => sliceIds.includes(s.slice_id)).map(s => s.loc)
-                return slices.map(slice => ({error_id: error.error_id, slice}))
-            }
-        })
         set({highlights: slices})
-        let response = await fetch('/api/typehole', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-                file: (get() as any).openedFile,
-                replaces: replaces,
-            })
-        })
-        let holes: Hole[] = await response.json()
-        holes = holes.filter((hole: Hole) => hole.error_id === currentError?.error_id)
-        set({replacements: holes})
+        let response = await fetch(`/api/suggestion/${currentError?.error_id}/${currentMcs?.setId}`)
+        let suggestions: string[] = await response.json()
+        console.log (suggestions)
+        set({suggestions})
+
     }
 }))
 

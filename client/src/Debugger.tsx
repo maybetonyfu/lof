@@ -1,11 +1,12 @@
 import React, {useEffect} from "react"
 import useAppStore from "./state";
-import { WrenchIcon, ExclamationTriangleIcon } from '@heroicons/react/24/outline'
+import { WrenchIcon } from '@heroicons/react/24/outline'
 import {RuleSet, TypeError} from "./global";
-import Card from "@mui/material/Card"
-import Paper from "@mui/material/Paper"
 
-import Box from "@mui/material/Box"
+import {Typography, Box, List, Paper, Card,CardContent, ListItem, ListItemButton,
+    IconButton, ListItemText} from "@mui/material";
+
+import {VisibilityOutlined} from '@mui/icons-material';
 const Hint = ({replacement} : any) => {
     if (replacement.kind == "Type hole") {
         return (<div>
@@ -55,39 +56,38 @@ const Fix = ({fix, slices, number}: any) => {
 
 
 }
-const Error = ({error} : any) => {
-    let setHighlight = useAppStore((state:any) => state.setHighlight)
-    return (<div className={"bg-stone-200 p-1 rounded-md flex flex-col mb-2"}>
+const TypeError = ({error} : any) => {
+    // let setHighlight = useAppStore((state:any) => state.setHighlight)
+    let chooseFix = useAppStore((state : any) => state.chooseFix)
+    let suggestions =  useAppStore((state : any) => state.suggestions)
+    return (<Card sx={{ }} >
+        <CardContent>
+        <Typography>Type error {error.error_id + 1}</Typography>
+        <Typography>Possible Fixes:</Typography>
 
-        <div className={"flex items-center h-10"}>
-            <ExclamationTriangleIcon className={"h-6 text-red-400"}/>
-            <div className={"ml-2 font-bold h-6 leading-6"}>Type error {error.error_id + 1}</div>
-        </div>
-        <div className={"flex flex-col bg-white rounded-sm p-1"}>
-            <div>The type error contains {error.mus_list.length} minimal conflicts:</div>
-            <div className={'flex'}>
-            {error.mus_list.map((mus: RuleSet, i: number) => {
-                let slices = error.slices
-                let rules = mus.rules
-                let activeSlices = slices.filter((slice: any) => rules.includes(slice.slice_id))
-                let locations = activeSlices.map((slice: any) => slice.loc)
-                return (<div
-                onClick={_ => {
-                    setHighlight(locations)
-                }}
-                className={'w-8 bg-amber-100 rounded-sm p-1 mr-1 align-center cursor-pointer'} key={i}>
-                {i + 1}
-            </div>)})}
 
-            </div>
-        </div>
 
-        <div className={'font-bold mt-2'}>Possible Fixes:</div>
-        <div className={"flex flex-col bg-white rounded-sm p-1"}>
-            {error.mcs_list.map((fix:RuleSet, i:number) => <Fix fix={fix} number={i} slices={error.slices} key={i}/>)}
-        </div>
+        <List dense disablePadding sx={{bgcolor : 'grey.200',}}>
+            {error.mcs_list.map((fix:RuleSet, i:number) => {
 
-    </div>)
+                return (<ListItem  key={i}
+                                   secondaryAction={
+                                       <IconButton edge="end"  onClick={_ => chooseFix(fix.setId)}>
+                                           <VisibilityOutlined />
+                                       </IconButton>
+                                   }
+                                 >
+                    <ListItemButton>
+                        <ListItemText primary={`Fix ${i + 1}`}></ListItemText>
+                    </ListItemButton>
+            </ListItem>)})}
+        </List>
+            <Paper sx={{marginTop: '10px', marginBottom: '10px'}}>
+                <Typography>Suggestion:</Typography>
+                {suggestions.map((s:string,i:number) => <Typography key={i}>{s}</Typography>) }
+            </Paper>
+            </CardContent>
+    </Card>)
 }
 const Debugger = () => {
     const errors = useAppStore((state: any) => state.errors)
@@ -95,8 +95,9 @@ const Debugger = () => {
     if (isLoading) {
         return <div>Type checking in progress</div>
     }
-    return (<Box sx={{bgcolor : 'grey.100', height: '100%'}}>
-        {errors.map((error: TypeError) => <Paper sx={{width: 128, height: 128}} elevation={1}  key={error.error_id}/>)}
+    return (
+    <Box sx={{bgcolor : 'grey.100', height: '100%', padding: '10px'}}>
+        {errors.map((error: TypeError) => <TypeError   key={error.error_id} error={error}/>)}
     </Box>)
 };
 

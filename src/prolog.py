@@ -4,7 +4,7 @@ from contextlib import ContextDecorator
 from pathlib import Path
 from enum import Enum
 from pydantic import BaseModel
-
+from devtools import debug
 
 class Kind(Enum):
     Atom = "Atom"
@@ -56,6 +56,8 @@ array = Term.array
 succeed = atom('true')
 fail = atom('false')
 
+def cons(x: Term, xs: Term):
+    return struct('[|]', x, xs)
 
 def unify(a: Term, b: Term):
     return struct('=', a, b)
@@ -68,7 +70,10 @@ class Clause(BaseModel):
     def __str__(self):
         head = self.head.__str__()
         body = ','.join([b.__str__() for b in self.body])
-        return f'{head} :- {body}'
+        if len(body) == 0:
+            return head
+        else:
+            return f'{head} :- {body}'
 
     def __repr__(self):
         return self.__str__()
@@ -127,7 +132,13 @@ class Prolog(ContextDecorator):
         return [f'assert(({c}))' for c in self.clauses]
 
     def generate_abolishes(self) -> list[str]:
-        return [f'abolish({predicate}/{arity})' for predicate, arity in self.predicates]
+        abolishes = [f'abolish({predicate}/{arity})' for predicate, arity in self.predicates]
+        self.predicates = []
+        for c in self.clauses:
+            value: dict = c.head.value
+            predicate = value['functor']
+            self.predicates.append((predicate, 2))
+        return abolishes
 
     def run_file(self):
         with open(self.file, mode="w") as f:
@@ -142,9 +153,11 @@ class Prolog(ContextDecorator):
         consult_query = ','.join(abolishes + asserts + [q.__str__() for q in self.queries])
         return self.prolog_thread.query(consult_query)
 
+    def run_raw_query(self, raw: str):
+        return self.prolog_thread.query(raw)
 
 if __name__ == "__main__":
     with Prolog(interface=PlInterface.Console) as prolog:
-        prolog.set_queries([unify(var('X'), atom('a'))])
-        r = prolog.run()
+        r = prolog.run_raw_query('member(X, [[a,b,c], [b | Xs]])')
+        # r = prolog.run()
         print(r)

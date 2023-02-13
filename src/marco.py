@@ -2,7 +2,7 @@ from z3 import *
 from typing import Optional, Callable
 import networkx
 from pydantic import BaseModel
-
+from devtools import debug
 
 class RuleSet(BaseModel):
     rules: set[int]
@@ -12,7 +12,6 @@ class RuleSet(BaseModel):
 class Island(BaseModel):
     mus_list: list[RuleSet]
     mcs_list: list[RuleSet]
-    rule_likelihood: list[tuple[int, list[int]]]
 
 
 class Marco:
@@ -22,7 +21,7 @@ class Marco:
         self.mus_list: list[RuleSet] = []
         self.mss_list: list[RuleSet] = []
         self.mcs_list: list[RuleSet] = []
-        self.islands: list[Island] = []
+        self.islands:  list[Island] = []
         self.solver = Solver()
         self.loop_counter = 0
         self.max_loops = 999
@@ -114,14 +113,8 @@ class Marco:
                 mcs_list.append(RuleSet(setId=mcs_counter, rules=mcs))
                 mcs_counter += 1
 
-            rule_likelihood = []
-            for rule in union_mus:
-                rule_appears_in = [mus.setId for mus in mus_list if rule in mus.rules]
-                rule_likelihood.append((rule, rule_appears_in))
 
-            self.islands = [
-                               Island(mus_list=mus_list, mcs_list=mcs_list,
-                                      rule_likelihood=rule_likelihood)] + self.islands
+            self.islands = [Island(mus_list=mus_list, mcs_list=mcs_list)] + self.islands
 
     def show(self):
         print(f"Process finished after {self.loop_counter} iterations")

@@ -1,12 +1,9 @@
 import React, {useEffect} from "react"
-import Grid from '@mui/material/Unstable_Grid2';
-import Layout from "./Layout"
-import Editor from "./Editor"
 import Sidebar from "./Sidebar"
 import Debugger from "./Debugger";
-import Paper from '@mui/material/Paper';
+import Editor from "./Editor";
 import useAppStore from "./state";
-import Container from "@mui/material/Container"
+import {Box, Flex} from "@chakra-ui/react";
 
 const App = () => {
     const setFileList = useAppStore((state: any) => state.setFileList)
@@ -14,19 +11,18 @@ const App = () => {
         setFileList();
     }, [])
     return (
-        <Container maxWidth={false} disableGutters sx={{height: "100%"}}>
-            <Grid container sx={{height: "100%"}}>
-                <Grid xs={'auto'}>
-                    <Sidebar/>
-                </Grid>
-                <Grid xs={6}>
-                    <Editor/>
-                </Grid>
-                <Grid xs>
-                    <Debugger />
-                </Grid>
-            </Grid>
-        </Container>
+        <Flex h={'100%'}>
+            <Box w={150} p={2}>
+                <Sidebar/>
+            </Box>
+            <Box flex={1}>
+                <Editor/>
+            </Box>
+            <Box w={350} p={2}>
+                <Debugger/>
+            </Box>
+        </Flex>
+
     )
 };
 

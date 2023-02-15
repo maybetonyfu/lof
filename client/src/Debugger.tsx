@@ -1,104 +1,76 @@
 import React, {useEffect} from "react"
 import useAppStore from "./state";
-import { WrenchIcon } from '@heroicons/react/24/outline'
-import {RuleSet, TypeError} from "./global";
+import {AppStore, Rule, RuleSet, TypeError} from "./global";
+import {Box, Tabs, TabList, TabPanels, Tab, TabPanel, VStack, Button, Text} from "@chakra-ui/react";
 
-import {Typography, Box, List, Paper, Card,CardContent, ListItem, ListItemButton,
-    IconButton, ListItemText} from "@mui/material";
-
-import {VisibilityOutlined} from '@mui/icons-material';
-const Hint = ({replacement} : any) => {
-    if (replacement.kind == "Type hole") {
-        return (<div>
-            Change <span className={'mx-1'}>{replacement.original}</span> to an instance of <span className={'mx-1'}>{replacement.signature}</span>
-        </div>)
-    } else if (replacement.kind == "Type wildcard") {
-        return (<div>
-            Change <span className={'mx-1'}>{replacement.original}</span>  to type <span className={'mx-1'}>{replacement.signature}</span>
-        </div>)
+const pluralize = (word: string, n: number) => {
+    if (n == 1) {
+        return word
     } else {
-        return (<div>
-            Change <span className={'mx-1'}>{replacement.original}</span>  to a different expression
-        </div>)
+        return word + 's'
     }
-
 }
-const Fix = ({fix, slices, number}: any) => {
-    let activeFix = useAppStore((state : any) => state.fix)
-    let chooseFix = useAppStore((state : any) => state.chooseFix)
-    let replacements = useAppStore((state : any) => state.replacements)
-    let setHighlight = useAppStore((state:any) => state.setHighlight)
-    let active = activeFix === fix.setId
-    let rules = fix.rules
-    let activeSlices = slices.filter((slice: any) => rules.includes(slice.slice_id))
 
+const TypeError = ({error}: any) => {
+    let chooseFix = useAppStore((state: AppStore) => state.chooseFix)
+    let suggestion = useAppStore((state: AppStore) => state.suggestion)
+    let rules = useAppStore((state: AppStore) => state.rules)
+    let currentError = useAppStore((state: AppStore) => state.current_error)
+    let currentFix = useAppStore((state: AppStore) => state.fix)
+    const removeDefs = (rs: RuleSet) => {
+        return !rs.rules
+            .flatMap(rid => rules.filter(rule => rule.rid === rid))
+            .some(rule => rule.type === "Def")
+    }
     return (
-        <div className={'flex flex-col rounded-sm py-0.5 px-1 cursor-pointer my-0.5 ' + (active ? 'bg-amber-100' : 'bg-stone-100')}>
-            <div
-                className={'flex items-center'}
-                onClick={_ => {
-                    chooseFix(fix.setId)
-                }}>
-                <WrenchIcon className="h-6 w-6 "/>
-                <span className={"ml-2"}>Fix {number + 1}</span>
-            </div>
-            {active ?
-                <div className={"text-gray-700"}>This location appears in {activeSlices[0].appears.length} conflicts</div>
-                :<></>
+        <TabPanel>
+            <Text>Possible Fixes:</Text>
+            <VStack w={'100%'}>
+                {error.mcs_list.filter(removeDefs).map((fix: RuleSet, i: number) => {
+                    return (
+                        <Button key={i} w={'100%'} colorScheme={'gray'}
+                                onClick={_ => chooseFix(error.error_id, fix.setId)}>
+                            {`Fix ${i + 1} (${fix.rules.length} ${pluralize('place', fix.rules.length)})`}
+                        </Button>)
+                })}
+            </VStack>
+            {error.error_id === currentError ?
+                (<Box>
+                    <Text>How to fix:</Text>
+                    <Box>
+                        {
+                            suggestion.map((s, i) => <Text key={i}>{s}</Text>)
+                        }
+                    </Box>
+                </Box>) : <></>
             }
-            <div>
-                {
-                    replacements.map((r: any) => activeFix == fix.setId ? <Hint replacement={r} key={r.hole_id}/> : null)
-                }
-            </div>
 
-        </div>)
-
-
-}
-const TypeError = ({error} : any) => {
-    // let setHighlight = useAppStore((state:any) => state.setHighlight)
-    let chooseFix = useAppStore((state : any) => state.chooseFix)
-    let suggestions =  useAppStore((state : any) => state.suggestions)
-    return (<Card sx={{ }} >
-        <CardContent>
-        <Typography>Type error {error.error_id + 1}</Typography>
-        <Typography>Possible Fixes:</Typography>
-
-
-
-        <List dense disablePadding sx={{bgcolor : 'grey.200',}}>
-            {error.mcs_list.map((fix:RuleSet, i:number) => {
-
-                return (<ListItem  key={i}
-                                   secondaryAction={
-                                       <IconButton edge="end"  onClick={_ => chooseFix(fix.setId)}>
-                                           <VisibilityOutlined />
-                                       </IconButton>
-                                   }
-                                 >
-                    <ListItemButton>
-                        <ListItemText primary={`Fix ${i + 1}`}></ListItemText>
-                    </ListItemButton>
-            </ListItem>)})}
-        </List>
-            <Paper sx={{marginTop: '10px', marginBottom: '10px'}}>
-                <Typography>Suggestion:</Typography>
-                {suggestions.map((s:string,i:number) => <Typography key={i}>{s}</Typography>) }
-            </Paper>
-            </CardContent>
-    </Card>)
+        </TabPanel>
+    )
 }
 const Debugger = () => {
-    const errors = useAppStore((state: any) => state.errors)
-    const isLoading = useAppStore((state: any) => state.isLoading)
+    const errors = useAppStore((state: AppStore) => state.errors)
+    const isLoading = useAppStore((state: AppStore) => state.isLoading)
     if (isLoading) {
-        return <div>Type checking in progress</div>
+        return <Box>
+            Loading
+        </Box>
     }
+
     return (
-    <Box sx={{bgcolor : 'grey.100', height: '100%', padding: '10px'}}>
-        {errors.map((error: TypeError) => <TypeError   key={error.error_id} error={error}/>)}
-    </Box>)
+        <Box sx={{bgcolor: 'grey.200', height: '100%', p: 1}}>
+            <Tabs>
+                <TabList>
+                    {errors.map((error: TypeError) => <Tab key={error.error_id}> Error {error.error_id + 1} </Tab>)}
+                </TabList>
+                <TabPanels>
+                    {errors.map((error: TypeError, i) => <TypeError
+                        key={i}
+                        error={error}
+                    />)}
+                </TabPanels>
+            </Tabs>
+        </Box>)
 };
 
 export default Debugger

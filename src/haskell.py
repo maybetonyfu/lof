@@ -301,7 +301,7 @@ class System:
             marco.run()
             marco.analyse()
             t_errors = []
-            for i, island in enumerate(marco.islands):
+            for i, island in enumerate(marco.tc_errors):
                 slices = []
                 for (ruleId, appears) in island.rule_likelihood:
                     rule = [r for r in self.rules if r.rid == ruleId][0]

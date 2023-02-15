@@ -2,19 +2,22 @@ from fastapi import FastAPI, Body
 from fastapi.responses import HTMLResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pathlib import Path
-from src.haskell import System, TError, Span
+from src.typechecker_hs import System, TCError, Rule, TypeSig
 from pydantic import BaseModel
+from src.prolog import Prolog, PlInterface
 
 app = FastAPI()
 
 items = {}
 
+
 @app.on_event("startup")
 async def startup_event():
-    base_dir = Path(__file__).parent.parent / "example"
-    system = System(str(base_dir))
-    items["system"] = system
-    items['base_dir'] = base_dir
+    with Prolog(interface=PlInterface.Console) as prolog:
+        base_dir = Path(__file__).parent.parent / "example"
+        system = System(str(base_dir), prolog)
+        items["system"] = system
+        items['base_dir'] = base_dir
 
 
 @app.get("/api/dir")
@@ -22,33 +25,23 @@ def get_dir():
     return [str(p.relative_to(items['base_dir'])) for p in items['base_dir'].rglob("*.hs")]
 
 
+class TypeCheckResult(BaseModel):
+    errors: list[TCError]
+    rules: list[Rule]
+
+
 @app.get("/api/typecheck")
-def typecheck() -> list[TError]:
+def typecheck() -> TypeCheckResult:
     system = items["system"]
-    result = system.type_check()
-    return result
+    errors = system.type_check()
+    return TypeCheckResult(errors=errors, rules=system.rules)
 
 
-class Replace(BaseModel):
-    error_id: int
-    slice: Span
-
-
-class Hole(BaseModel):
-    original: str
-    hole_id: int
-    loc: Span
-    signature: str
-    kind: str
-    error_id: int
-
-
-
-@app.get("/api/suggestion/{error_id}/{mcs_id}")
-def suggestion(error_id: int, mcs_id: int) -> list[str]:
+@app.get("/api/infer/{error_id}/{mcs_id}")
+def infer(error_id: int, mcs_id: int) -> list[TypeSig]:
     system = items["system"]
-    suggestions = system.inference(error_id, mcs_id)
-    return suggestions
+    types = system.infer_type(error_id, mcs_id)
+    return types
 
 
 @app.get('/api/file/{file_path:path}')
@@ -66,7 +59,6 @@ def save_file(file_path: str, file_content: str = Body()):
 
 app.mount("/static", StaticFiles(directory="./client/output"), name="static")
 
-
 @app.get("/", response_class=HTMLResponse)
 def home():
     return """
@@ -74,8 +66,8 @@ def home():
     <html>
         <head>
             <title>Editor</title>
-            <link rel="icon" href="https://fav.farm/💩" /> 
-            <link  rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,400,500,700&display=swap"/>
+            <link rel="icon" type="image/png" sizes="32x32" href="/static/favicon-32x32.png">
+            <link rel="icon" type="image/png" sizes="16x16" href="/static/favicon-16x16.png">
             <link rel="stylesheet" href="/static/css/style.css">
         </head>
         <body>

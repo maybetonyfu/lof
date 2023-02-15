@@ -1,27 +1,61 @@
-export interface RuleSet {
-    setId: number,
-    rules: number[]
+export interface Term {
+    value: string
+    kind: "Var" | "Atom" | "Struct" | "Array"
 }
 
-export interface Slice {
-    slice_id: number,
-    loc: [[number, number], [number, number]],
-    appears: number[]
+export interface RuleSet {
+    setId: number,
+    rules: number[],
+
+}
+
+export type Span = [[number, number], [number, number]]
+
+export interface Rule {
+    rid: number,
+    loc: Span,
+    watch: Term[],
+    head: string,
+    src_text: string | null,
+    type: string
+}
+
+export interface TCResponse {
+    errors: TypeError[],
+    rules: Rule[]
 }
 
 export interface TypeError {
     error_id: number,
     mus_list: RuleSet[],
     mcs_list: RuleSet[],
-    slices: Slice[]
+    mss_list: RuleSet[],
 }
 
-export interface Hole {
-    original: string,
-    hole_id: number,
-    loc: [[number, number], [number, number]],
-    signature: string,
-    kind: 'Type hole' | 'Type wildcard' | 'Rename',
+export interface TypeSig {
+    var: str,
+    type: str,
+}
 
-    error_id: number
+export interface AppStore {
+    chooseFix: (number, number) => Promise<void>
+    writeFile: (string) => Promise<void>,
+    typeCheck: () => Promise<void>,
+    fileList: string[],
+    openedFile: null | string,
+    buffer: string,
+    isLoading: boolean,
+    errors: TypeError[],
+    current_error: null | number,
+    fix: null | number,
+    rules: Rule[],
+    errorDefs: ErrorDef[],
+    highlights: Span[],
+    suggestion: string[]
+}
+
+interface ErrorDef {
+    def: string,
+    rule: Rule,
+    usages: Rule[]
 }

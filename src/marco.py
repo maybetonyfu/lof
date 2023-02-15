@@ -4,14 +4,17 @@ import networkx
 from pydantic import BaseModel
 from devtools import debug
 
+
 class RuleSet(BaseModel):
     rules: set[int]
     setId: int
 
 
-class Island(BaseModel):
+class TCError(BaseModel):
+    error_id: int
     mus_list: list[RuleSet]
     mcs_list: list[RuleSet]
+    mss_list: list[RuleSet]
 
 
 class Marco:
@@ -21,7 +24,7 @@ class Marco:
         self.mus_list: list[RuleSet] = []
         self.mss_list: list[RuleSet] = []
         self.mcs_list: list[RuleSet] = []
-        self.islands:  list[Island] = []
+        self.tc_errors: list[TCError] = []
         self.solver = Solver()
         self.loop_counter = 0
         self.max_loops = 999
@@ -95,31 +98,28 @@ class Marco:
                 else:
                     self.graph.add_edge(mus1.setId, mus2.setId)
 
-        for component in networkx.connected_components(self.graph):
+        for i, component in enumerate(networkx.connected_components(self.graph)):
             mus_list = [mus for mus in self.mus_list if mus.setId in component]
-            union_mus: set[int] = set().union(*[mus.rules for mus in mus_list])
-            mcs_rule_list = []
             mcs_list = []
-            for mcs in self.mcs_list:
-                rules = mcs.rules & union_mus
-                if rules == set():
-                    continue
-                elif rules in mcs_rule_list:
+            mss_list = []
+            all_mus_rules: set[int] = set().union(*[mus.rules for mus in mus_list])
+            reduced_mcses = [RuleSet(setId=mcs.setId, rules=mcs.rules & all_mus_rules) for mcs in self.mcs_list]
+            non_empty_mcses = [mcs for mcs in reduced_mcses if len(mcs.rules) != 0]
+            seen = []
+            for mcs in non_empty_mcses:
+                if mcs.rules in seen:
                     continue
                 else:
-                    mcs_rule_list.append(rules)
+                    seen.append(mcs.rules)
+                    mcs_list.append(mcs)
+                    mss_list.append([mss for mss in self.mss_list if mss.setId == mcs.setId][0])
 
-            for mcs in mcs_rule_list:
-                mcs_list.append(RuleSet(setId=mcs_counter, rules=mcs))
-                mcs_counter += 1
-
-
-            self.islands = [Island(mus_list=mus_list, mcs_list=mcs_list)] + self.islands
+            self.tc_errors.append(TCError(error_id=i,mus_list=mus_list, mcs_list=mcs_list, mss_list=mss_list))
 
     def show(self):
         print(f"Process finished after {self.loop_counter} iterations")
-        print(f"{len(self.islands)} islands found in the code")
-        for island in self.islands:
+        print(f"{len(self.tc_errors)} islands found in the code")
+        for island in self.tc_errors:
             print(f"island:")
             print(f"\nMUSs:")
             for mus in island.mus_list:

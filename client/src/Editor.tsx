@@ -5,7 +5,7 @@ import useAppStore from "./state";
 import {Decoration, DecorationSet, keymap} from "@codemirror/view";
 import {
     ChangeDesc,
-    EditorState,
+    // EditorState,
     RangeSet,
     StateEffect,
     StateEffectType,

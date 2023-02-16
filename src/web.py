@@ -2,7 +2,7 @@ from fastapi import FastAPI, Body
 from fastapi.responses import HTMLResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pathlib import Path
-from src.typechecker_hs import System, TCError, Rule, TypeSig
+from src.haskell import System, TCError, Rule, TypeSig
 from pydantic import BaseModel
 from src.prolog import Prolog, PlInterface
 
@@ -20,7 +20,7 @@ async def startup_event():
         items['base_dir'] = base_dir
 
 
-@app.get("/api/dir")
+@app.get("/api/ls")
 def get_dir():
     return [str(p.relative_to(items['base_dir'])) for p in items['base_dir'].rglob("*.hs")]
 
@@ -30,7 +30,7 @@ class TypeCheckResult(BaseModel):
     rules: list[Rule]
 
 
-@app.get("/api/typecheck")
+@app.get("/api/type_check")
 def typecheck() -> TypeCheckResult:
     system = items["system"]
     errors = system.type_check()

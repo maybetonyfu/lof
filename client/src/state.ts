@@ -1,20 +1,18 @@
-import {create} from 'zustand'
-import {AppStore, ErrorDef, Rule, RuleSet, TCResponse, TypeError, TypeSig} from "./global";
+import {create, StateCreator} from 'zustand'
+import {FileStore, DebuggerStore, ErrorDef, Rule, RuleSet, TCResponse, TypeError, TypeSig} from "./global";
 
 const isLowerCase = (str: string) => /^[a-z]*$/.test(str)
 
-const useAppStore = create<AppStore>((set, get) => ({
+
+const useFileStore: StateCreator<
+    DebuggerStore & FileStore,
+    [],
+    [],
+    FileStore
+> = (set, get) => ({
     fileList: [],
     openedFile: null,
     buffer: "",
-    isLoading: false,
-    errors: [],
-    current_error: null,
-    fix: null,
-    rules: [],
-    errorDefs: [],
-    highlights: [],
-    suggestion: [],
     readFile: async (file: string) => {
         let response = await fetch('/api/file/' + file)
         let file_text: string = await response.text()
@@ -23,8 +21,9 @@ const useAppStore = create<AppStore>((set, get) => ({
             buffer: file_text
         })
     },
+
     writeFile: async (content: string) => {
-        let openedFile = (get() as any).openedFile
+        let openedFile = get().openedFile
         let response = await fetch('/api/file/' + openedFile, {
             method: "POST",
             body: content
@@ -33,17 +32,32 @@ const useAppStore = create<AppStore>((set, get) => ({
         set({
             buffer: file_text
         })
-
     },
     setFileList: async () => {
-        let response = await fetch('/api/dir')
+        let response = await fetch('/api/ls')
         let fileList: string[] = await response.json()
         set({fileList})
     },
 
+})
+
+const useDebuggerStore: StateCreator<
+    DebuggerStore & FileStore,
+    [],
+    [],
+    DebuggerStore
+> = (set, get) => ({
+    isLoading: false,
+    errors: [],
+    currentError: null,
+    fix: null,
+    rules: [],
+    errorDefs: [],
+    highlights: [],
+    suggestion: [],
     typeCheck: async () => {
         set({isLoading: true, highlights: [], fix: null})
-        let response = await fetch('/api/typecheck')
+        let response = await fetch('/api/type_check')
         let tcResponse: TCResponse = await response.json()
         let errorDefs: ErrorDef[] = tcResponse.errors.flatMap(error => {
             let error_mus = new Set(error.mus_list.flatMap(mus => mus.rules))
@@ -74,14 +88,13 @@ const useAppStore = create<AppStore>((set, get) => ({
 
     chooseFix: async (error: number, fix: number) => {
         set({highlights: []})
-        set({fix, current_error: error})
+        set({fix, currentError: error})
         let errors: TypeError[] = get().errors
         let errorDefs = get().errorDefs
         let currentError = errors[error]
         let currentMcs: RuleSet = currentError.mcs_list.find(f => f.setId == fix) || {setId: -1, rules: []}
         let mcsRules = currentMcs.rules
         let rules = get().rules.filter(rule => mcsRules.includes(rule.rid))
-
         let locs = rules.map(rule => rule.loc)
         set({highlights: locs})
         let response = await fetch(`/api/infer/${currentError?.error_id}/${currentMcs.setId}`)
@@ -98,7 +111,7 @@ const useAppStore = create<AppStore>((set, get) => ({
         })
         set({suggestion})
     }
-}))
+})
 
 
 function suggest(ruleType: string,
@@ -111,10 +124,10 @@ function suggest(ruleType: string,
 
     if (isDef) {
         let def: string = isDef.def
-        let [line, col] = isDef.rule.loc[0]
+        // let [line, col] = isDef.rule.loc[0]
         let usageDetail: string;
         if (isDef.usages.length !== 0) {
-            let [line, col] = isDef.usages[0].loc[0]
+            let [line, _] = isDef.usages[0].loc[0]
             usageDetail = `usage on line ${line}`
         } else {
             usageDetail = `other definitions`
@@ -139,4 +152,8 @@ function suggest(ruleType: string,
     return ''
 }
 
+const useAppStore = create<DebuggerStore & FileStore>()((...a) => ({
+    ...useDebuggerStore(...a),
+    ...useFileStore(...a),
+}))
 export default useAppStore

@@ -1,0 +1,9 @@
+build-lib:
+    stack build haskell-parser:lib
+
+build-bin:
+    stack build
+    cp $(stack exec -- which haskell-parser) ../../bin/
+
+run:
+    stack runghc src/Process.hs

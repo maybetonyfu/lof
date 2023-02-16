@@ -37,16 +37,23 @@ export interface TypeSig {
     type: str,
 }
 
-export interface AppStore {
-    chooseFix: (number, number) => Promise<void>
-    writeFile: (string) => Promise<void>,
-    typeCheck: () => Promise<void>,
+
+interface FileStore {
     fileList: string[],
-    openedFile: null | string,
     buffer: string,
+    openedFile: null | string,
+    writeFile: (f: string) => Promise<void>,
+    readFile: (name: string) => Promise<void>,
+    setFileList: () => Promise<void>
+
+}
+
+export interface DebuggerStore {
+    chooseFix: (number, number) => Promise<void>
+    typeCheck: () => Promise<void>,
     isLoading: boolean,
     errors: TypeError[],
-    current_error: null | number,
+    currentError: null | number,
     fix: null | number,
     rules: Rule[],
     errorDefs: ErrorDef[],
@@ -59,3 +66,5 @@ interface ErrorDef {
     rule: Rule,
     usages: Rule[]
 }
+
+type AppStore = DebuggerStore & FileStore

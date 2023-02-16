@@ -1,0 +1,3 @@
+type_of_b_4_6(T, {}).
+type_of_x(T, [FreshB0, FreshB1, FreshB2, FreshB3, FreshB5, FreshB6]) :- '='(FreshB0, T),'='(FreshB0, int),'='(T, FreshB3),'='(FreshB1, function(FreshB2, T)),'='(FreshB1, FreshB5),'='(FreshB5, _myid),type_of_myid(_myid, FreshU4),'='(FreshB2, FreshB6),'='(FreshB6, char).
+type_of_myid(T, [FreshB7, FreshB8, FreshB9, FreshB10]) :- '='(T, FreshB9),'='(FreshB9, function(FreshB7, FreshB8)),'='(_b_4_6, FreshB7),'='(FreshB8, FreshB10),'='(FreshB10, char).

@@ -8,7 +8,7 @@ import {Box, Flex} from "@chakra-ui/react";
 const App = () => {
     const setFileList = useAppStore((state: any) => state.setFileList)
     useEffect(() => {
-        setFileList();
+        setFileList().then((_:any) => {});
     }, [])
     return (
         <Flex h={'100%'}>

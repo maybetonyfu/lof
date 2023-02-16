@@ -3,14 +3,13 @@ import useAppStore from "./state";
 import {
     Button,
     VStack,
-    Text,
 } from '@chakra-ui/react'
 
 function Entry({file}: any) {
     let openedFile = useAppStore((state: any) => state.openedFile)
     let readFile = useAppStore((state: any) => state.readFile)
     let active = openedFile === file
-    return (<Button w={'100%'} colorScheme={'gray'} onClick={_ => readFile(file)}>
+    return (<Button w={'100%'} colorScheme={active ? 'blue' : 'gray' } onClick={_ => readFile(file)}>
         {file}
     </Button>)
 }

@@ -16,9 +16,14 @@ import {AppStore} from "./global";
 
 const themeExt = EditorView.theme({
     "&": {height: "100%", fontSize: '17px'},
-    ".marker0": {background: "#d5f200"},
-    ".marker1": {background: "#ffdddf"},
-    ".marker2": {background: "#ffe0b2"},
+    ".marker-mute": {background: "var(--chakra-colors-gray-200)"},
+    ".marker-active": {
+        background: "var(--chakra-colors-blue-500)",
+        textDecoration: 'line-through',
+        textDecorationThickness: '2px',
+        textDecorationColor: "var(--chakra-colors-red-500)",
+        color: "white"},
+    ".marker-secondary": {background: "var(--chakra-colors-yellow-300)"},
     ".marker3": {background: "#5dffa2"},
     ".marker4": {background: "#c6e0ff"},
     ".marker5": {background: "#00ffe4"},
@@ -31,6 +36,7 @@ const keymapExt = keymap.of([{
         let newText = view.state.doc.sliceString(0, view.state.doc.length)
         useAppStore.getState().writeFile(newText)
             .then(_ => useAppStore.getState().typeCheck())
+            .then(_ => useAppStore.getState().setHighlights())
         return true
     }
 }])
@@ -78,12 +84,12 @@ function App() {
     React.useEffect(() => {
         if (editorRef.current === null) return;
         let doc = editorRef.current.state.doc;
-        let effects: StateEffect<HighlightSpec>[] = highlights.map((hl) => {
-            let [fromL, fromC] = hl[0]
-            let [toL, toC] = hl[1]
+        let effects: StateEffect<HighlightSpec>[] = highlights.map(({span, marker}) => {
+            let [fromL, fromC] = span[0]
+            let [toL, toC] = span[1]
             const startPos = doc.line(fromL).from + fromC - 1
             const endPos = doc.line(toL).from + toC - 1
-            return hlEffect.of({from: startPos, to: endPos, marker: `marker0`})
+            return hlEffect.of({from: startPos, to: endPos, marker})
         });
 
         editorRef.current.dispatch({effects: effects})

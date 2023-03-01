@@ -55,7 +55,7 @@ instance ToJSON (NameInfo SrcSpanInfo) where
     object
       [ "type" .= Data.Aeson.String "RecExpWildcard"
       ]
-  toJSON (None) = Null
+  toJSON None = Null
   toJSON (ScopeError a) =
     object
       [ "type" .= Data.Aeson.String "Error"

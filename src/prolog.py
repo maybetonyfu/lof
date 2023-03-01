@@ -4,7 +4,9 @@ from contextlib import ContextDecorator
 from pathlib import Path
 from enum import Enum
 from pydantic import BaseModel
-from devtools import debug
+
+
+# from devtools import debug
 
 class Kind(Enum):
     Atom = "Atom"
@@ -56,8 +58,10 @@ array = Term.array
 succeed = atom('true')
 fail = atom('false')
 
+
 def cons(x: Term, xs: Term):
     return struct('[|]', x, xs)
+
 
 def unify(a: Term, b: Term):
     return struct('=', a, b)
@@ -87,6 +91,11 @@ class PlInterface(Enum):
 class Prolog(ContextDecorator):
     def __init__(self, interface: PlInterface, file: Optional[str] = None):
         self.file = file
+        self.prelude = [
+            'type_of_length(T, {}) :- T = function(list(X), int)',
+            'type_of_map(T, {}) :- T = function(function(A, B), function(list(A), list(B)))',
+            'type_of_id(T, {}) :- T = function(A, A)'
+        ]
         self.clauses: list[Clause] = []
         self.queries: list[Term] = []
         self.predicates: list[tuple[str, int]] = []
@@ -143,18 +152,22 @@ class Prolog(ContextDecorator):
     def run_file(self):
         with open(self.file, mode="w") as f:
             f.write(self.generate_script())
+        # prelude = [f'assert(({prelude}))' for prelude in self.prelude]
         abolishes = self.generate_abolishes()
-        consult_query = ','.join(abolishes + [f"consult({Path(self.file).stem})"] + [q.__str__() for q in self.queries])
+        consult_query = ','.join(abolishes + ['consult(prelude)'] + [ f"consult({Path(self.file).stem})"] + [q.__str__() for q in self.queries])
         return self.prolog_thread.query(consult_query)
 
     def run_console(self):
         asserts = self.generate_asserts()
+        # prelude = [f'assert(({prelude}))' for prelude in self.prelude]
+
         abolishes = self.generate_abolishes()
-        consult_query = ','.join(abolishes + asserts + [q.__str__() for q in self.queries])
+        consult_query = ','.join(abolishes +  ['consult(prelude)']  + asserts + [q.__str__() for q in self.queries])
         return self.prolog_thread.query(consult_query)
 
     def run_raw_query(self, raw: str):
         return self.prolog_thread.query(raw)
+
 
 if __name__ == "__main__":
     with Prolog(interface=PlInterface.Console) as prolog:

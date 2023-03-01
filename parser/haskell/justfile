@@ -2,6 +2,7 @@ build-lib:
     stack build haskell-parser:lib
 
 build-bin:
+    rm ../../bin/haskell-parser*
     stack build
     cp $(stack exec -- which haskell-parser) ../../bin/
 

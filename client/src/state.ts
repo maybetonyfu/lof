@@ -1,11 +1,8 @@
 import {create, StateCreator} from 'zustand'
-import {FileStore, DebuggerStore, ErrorDef, Rule, RuleSet, TCResponse, TypeError, TypeSig} from "./global";
-
-const isLowerCase = (str: string) => /^[a-z]*$/.test(str)
-
+import {FileStore, DebuggerStore, Diagnosis, EditorStore, Span, Highlight} from "./global";
 
 const useFileStore: StateCreator<
-    DebuggerStore & FileStore,
+    DebuggerStore & FileStore & EditorStore,
     [],
     [],
     FileStore
@@ -21,7 +18,6 @@ const useFileStore: StateCreator<
             buffer: file_text
         })
     },
-
     writeFile: async (content: string) => {
         let openedFile = get().openedFile
         let response = await fetch('/api/file/' + openedFile, {
@@ -42,118 +38,121 @@ const useFileStore: StateCreator<
 })
 
 const useDebuggerStore: StateCreator<
-    DebuggerStore & FileStore,
+    DebuggerStore & FileStore & EditorStore,
     [],
     [],
     DebuggerStore
 > = (set, get) => ({
     isLoading: false,
     errors: [],
-    currentError: null,
-    fix: null,
-    rules: [],
-    errorDefs: [],
-    highlights: [],
-    suggestion: [],
+    activeErrorId: null,
+    activeCauseId: null,
+    suggestions: [],
+    previewEnabled: false,
     typeCheck: async () => {
-        set({isLoading: true, highlights: [], fix: null})
-        let response = await fetch('/api/type_check')
-        let tcResponse: TCResponse = await response.json()
-        let errorDefs: ErrorDef[] = tcResponse.errors.flatMap(error => {
-            let error_mus = new Set(error.mus_list.flatMap(mus => mus.rules))
-            let mus_rules = tcResponse.rules.filter(rule => error_mus.has(rule.rid))
-            let def_rules = mus_rules.filter(rule => rule.type === 'Def')
-            return def_rules.map(rule => {
-                let def = rule.src_text as string
-                let usages = mus_rules.filter(r => r.src_text === def && r.type === "Var")
-                return {
-                    rule: rule,
-                    def: def,
-                    usages: usages
-                }
-            })
+        set({
+            isLoading: true,
+            highlights: [],
+            activeErrorId: null,
+            activeCauseId: null
         })
-
+        let response = await fetch('/api/type_check')
+        let diagnoses: Diagnosis[] = await response.json()
+        let activeErrorId = diagnoses.length > 0 ? 0 : null
+        let activeCauseId = null
         set({
             isLoading: false,
-            errors: tcResponse.errors,
-            rules: tcResponse.rules,
-            errorDefs: errorDefs
+            errors: diagnoses,
+            activeErrorId,
+            activeCauseId
         })
     },
 
-    setHighlight: (spans: [[number, number], [number, number]][]) => {
-        set({highlights: spans})
+    togglePreview: () => {
+        let previewEnabled = !get().previewEnabled
+        set({previewEnabled: previewEnabled})
     },
 
-    chooseFix: async (error: number, fix: number) => {
-        set({highlights: []})
-        set({fix, currentError: error})
-        let errors: TypeError[] = get().errors
-        let errorDefs = get().errorDefs
-        let currentError = errors[error]
-        let currentMcs: RuleSet = currentError.mcs_list.find(f => f.setId == fix) || {setId: -1, rules: []}
-        let mcsRules = currentMcs.rules
-        let rules = get().rules.filter(rule => mcsRules.includes(rule.rid))
-        let locs = rules.map(rule => rule.loc)
-        set({highlights: locs})
-        let response = await fetch(`/api/infer/${currentError?.error_id}/${currentMcs.setId}`)
-        let typeSigs: TypeSig[] = await response.json()
-        let suggestion: string[] = rules.map((rule: Rule) => {
-            return rule.watch.map(t => {
-                let ts = typeSigs.find(ts => ts.var === t.value) as TypeSig
-                let toType = ts.type
-                let isTypeVar = isLowerCase(toType)
-                let ruleHead = rule.head
-                let isDef = errorDefs.find((ed: ErrorDef) => ed.def === ruleHead)
-                return suggest(rule.type, rule.src_text as string, toType, isTypeVar, isDef)
-            }).join(',')
-        })
-        set({suggestion})
+    chooseError: (error: number) => {
+        set({activeErrorId: error, activeCauseId: null})
+    },
+
+    chooseFix: (error: number, cause: number | null) => {
+        set({activeCauseId: cause, activeErrorId: error})
+    },
+
+    searchType: async (type) => {
+        if (type === 'Bool') {
+            return Promise.resolve(['True', 'False'])
+        } else if (type === 'Int') {
+            return Promise.resolve(['1', '2', '3', '4'])
+        } else if (type === 'Char') {
+            return Promise.resolve(["'a'", "'b'", "'c'"])
+        } else if (type === '[Char]') {
+            return Promise.resolve(['"hello"', '"12345"'])
+        } else if (type === 'Float') {
+            return Promise.resolve(['1.5', '0.0', '3.1415'])
+        } else {
+            let query = encodeURIComponent(type + '+Prelude+base')
+            let response = await fetch(`https://hoogle.haskell.org/?mode=json&format=text&hoogle=${query}&count=5`)
+            let types: { item: string }[] = await response.json()
+            return types.map(type => type.item)
+        }
     }
 })
 
-
-function suggest(ruleType: string,
-                 fromExp: string,
-                 toType: string,
-                 isTypeVar: boolean,
-                 isDef: ErrorDef | undefined
-): string {
-    let additional: string = '';
-
-    if (isDef) {
-        let def: string = isDef.def
-        // let [line, col] = isDef.rule.loc[0]
-        let usageDetail: string;
-        if (isDef.usages.length !== 0) {
-            let [line, _] = isDef.usages[0].loc[0]
-            usageDetail = `usage on line ${line}`
-        } else {
-            usageDetail = `other definitions`
+const useEditorStore: StateCreator<
+    DebuggerStore & FileStore & EditorStore,
+    [],
+    [],
+    EditorStore
+> = (set, get) => ({
+    highlights: [],
+    previousHighlights: null,
+    setHighlights() {
+        let activeErrorId = get().activeErrorId
+        let activeCauseId = get().activeCauseId
+        if (activeErrorId !== null) {
+            let error = get().errors[activeErrorId]
+            let all_locs = error.locs
+            let cause_loc = activeCauseId === null ? [] : error.causes[activeCauseId].locs
+            let highlights_all = all_locs
+                .filter(span => !cause_loc.some(cause_span => intersection(span, cause_span)))
+                .map(span => {
+                    return {span, marker: 'marker-mute'}
+                })
+            let highlights_cause = cause_loc.map(span => {
+                return {span, marker: 'marker-active'}
+            })
+            set({highlights: [...highlights_cause, ...highlights_all,]})
         }
-        additional = `, so that the type of ${def} match its ${usageDetail}`
+    },
+    pushHighlights(highlights: Highlight[]) {
+        let currentHighlights = get().highlights
+        let newCurrent = currentHighlights.filter(span => !highlights.some(newHl => intersection(
+            span.span, newHl.span
+        )))
+        set({previousHighlights: currentHighlights, highlights: [...newCurrent, ...highlights]})
+    },
+    popHighlights() {
+        let previous = get().previousHighlights
+        if (previous !== null) {
+            set({previousHighlights: null, highlights: previous})
+        }
     }
-    if (ruleType === "Lit") {
-        let effect = isTypeVar ? "an expression of a different type" : `an instance of type ${toType}`
-        return `Change ${fromExp} to ${effect}${additional}.`
-    } else if (ruleType === "Type") {
-        let effect = isTypeVar ? "a different type" : `${toType}`
-        return `Change ${fromExp} to ${effect}${additional}.`
 
-    } else if (ruleType === "Var") {
-        let effect = isTypeVar ? "an expression of a different type" : `an instance of type ${toType}`
-        return `Change ${fromExp} to ${effect}${additional}.`
+})
 
-    } else if (ruleType === "App") {
-        let effect = isTypeVar ? "an expression of a different type" : `an instance of type ${toType}`
-        return `Change ${fromExp} to ${effect}${additional}.`
-    }
-    return ''
+function intersection(a: Span, b: Span): boolean {
+    let [[aFromL, aFromC], [aToL, aToC]] = a
+    let [[bFromL, bFromC], [bToL, bToC]] = b
+    return (aFromL === bToL && aFromC <= bToC) ||
+        (bFromL === aToL && bFromC <= aToC)
 }
 
-const useAppStore = create<DebuggerStore & FileStore>()((...a) => ({
+const useAppStore = create<DebuggerStore & FileStore & EditorStore>()((...a) => ({
     ...useDebuggerStore(...a),
     ...useFileStore(...a),
+    ...useEditorStore(...a)
 }))
 export default useAppStore

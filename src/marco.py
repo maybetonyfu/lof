@@ -10,7 +10,7 @@ class RuleSet(BaseModel):
     setId: int
 
 
-class TCError(BaseModel):
+class Error(BaseModel):
     error_id: int
     mus_list: list[RuleSet]
     mcs_list: list[RuleSet]
@@ -24,7 +24,7 @@ class Marco:
         self.mus_list: list[RuleSet] = []
         self.mss_list: list[RuleSet] = []
         self.mcs_list: list[RuleSet] = []
-        self.tc_errors: list[TCError] = []
+        self.tc_errors: list[Error] = []
         self.solver = Solver()
         self.loop_counter = 0
         self.max_loops = 999
@@ -114,7 +114,7 @@ class Marco:
                     mcs_list.append(mcs)
                     mss_list.append([mss for mss in self.mss_list if mss.setId == mcs.setId][0])
 
-            self.tc_errors.append(TCError(error_id=i,mus_list=mus_list, mcs_list=mcs_list, mss_list=mss_list))
+            self.tc_errors.append(Error(error_id=i, mus_list=mus_list, mcs_list=mcs_list, mss_list=mss_list))
 
     def show(self):
         print(f"Process finished after {self.loop_counter} iterations")

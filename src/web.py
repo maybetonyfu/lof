@@ -2,7 +2,7 @@ from fastapi import FastAPI, Body
 from fastapi.responses import HTMLResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pathlib import Path
-from src.haskell import System, TCError, Rule, TypeSig
+from src.haskell import System, Error, Rule, TypeSig, Diagnosis
 from pydantic import BaseModel
 from src.prolog import Prolog, PlInterface
 
@@ -13,7 +13,7 @@ items = {}
 
 @app.on_event("startup")
 async def startup_event():
-    with Prolog(interface=PlInterface.Console) as prolog:
+    with Prolog(interface=PlInterface.Console, file='program') as prolog:
         base_dir = Path(__file__).parent.parent / "example"
         system = System(str(base_dir), prolog)
         items["system"] = system
@@ -26,15 +26,16 @@ def get_dir():
 
 
 class TypeCheckResult(BaseModel):
-    errors: list[TCError]
+    errors: list[Error]
     rules: list[Rule]
 
 
 @app.get("/api/type_check")
-def typecheck() -> TypeCheckResult:
+def typecheck() -> list[Diagnosis]:
     system = items["system"]
     errors = system.type_check()
-    return TypeCheckResult(errors=errors, rules=system.rules)
+
+    return errors
 
 
 @app.get("/api/infer/{error_id}/{mcs_id}")
@@ -68,6 +69,10 @@ def home():
             <title>Editor</title>
             <link rel="icon" type="image/png" sizes="32x32" href="/static/favicon-32x32.png">
             <link rel="icon" type="image/png" sizes="16x16" href="/static/favicon-16x16.png">
+           
+            <link rel="preconnect" href="https://fonts.googleapis.com">
+            <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+            <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono&display=swap" rel="stylesheet">
             <link rel="stylesheet" href="/static/css/style.css">
         </head>
         <body>

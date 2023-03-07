@@ -11,6 +11,7 @@ specifiers:
   codemirror: ^6.0.1
   esbuild: ^0.17.4
   framer-motion: ^9.0.2
+  nanoid: ^4.0.1
   react: ^18.2.0
   react-dom: ^18.2.0
   react-icons: ^4.7.1
@@ -26,6 +27,7 @@ dependencies:
   '@uiw/react-codemirror': 4.19.9_ab66c4947435ea31e0a8df61871af0be
   codemirror: 6.0.1
   framer-motion: 9.0.2_react-dom@18.2.0+react@18.2.0
+  nanoid: 4.0.1
   react: 18.2.0
   react-dom: 18.2.0_react@18.2.0
   react-icons: 4.7.1_react@18.2.0
@@ -1968,6 +1970,12 @@ packages:
     hasBin: true
     dependencies:
       js-tokens: 4.0.0
+    dev: false
+
+  /nanoid/4.0.1:
+    resolution: {integrity: sha512-udKGtCCUafD3nQtJg9wBhRP3KMbPglUsgV5JVsXhvyBs/oefqb4sqMEhKBBgqZncYowu58p1prsZQBYvAj/Gww==}
+    engines: {node: ^14 || ^16 || >=18}
+    hasBin: true
     dev: false
 
   /object-assign/4.1.1:

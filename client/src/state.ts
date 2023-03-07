@@ -1,6 +1,9 @@
 import {create, StateCreator} from 'zustand'
 import {FileStore, DebuggerStore, Diagnosis, EditorStore, Span, Highlight} from "./global";
+import { customAlphabet  } from 'nanoid'
+const nanoid = customAlphabet('1234567890abcdefghijklmnopqrstuvwxyz', 15)
 
+const user_id = nanoid()
 const useFileStore: StateCreator<
     DebuggerStore & FileStore & EditorStore,
     [],
@@ -10,27 +13,31 @@ const useFileStore: StateCreator<
     fileList: [],
     openedFile: null,
     buffer: "",
+    setBuffer: (buffer:string) => set({buffer, dirty: true}),
     readFile: async (file: string) => {
-        let response = await fetch('/api/file/' + file)
+        let response = await fetch(`/api/file/${file}?user_id=${user_id}` )
         let file_text: string = await response.text()
         set({
             openedFile: file,
-            buffer: file_text
+            buffer: file_text,
+            dirty: false
         })
     },
-    writeFile: async (content: string) => {
+
+    writeFile: async () => {
         let openedFile = get().openedFile
-        let response = await fetch('/api/file/' + openedFile, {
+        let buffer = get().buffer
+        console.log(buffer)
+        await fetch(`/api/file/${openedFile}?user_id=${user_id}`, {
             method: "POST",
-            body: content
+            body: buffer
         })
-        let file_text: string = await response.text()
-        set({
-            buffer: file_text
-        })
+        return undefined
     },
     setFileList: async () => {
-        let response = await fetch('/api/ls')
+        let response = await fetch(`/api/ls?user_id=${user_id}`, {
+
+        })
         let fileList: string[] = await response.json()
         set({fileList})
     },
@@ -54,12 +61,13 @@ const useDebuggerStore: StateCreator<
             isLoading: true,
             highlights: [],
             activeErrorId: null,
-            activeCauseId: null
+            activeCauseId: null,
+            dirty: false
         })
-        let response = await fetch('/api/type_check')
+        let response = await fetch(`/api/type_check?user_id=${user_id}`)
         let diagnoses: Diagnosis[] = await response.json()
         let activeErrorId = diagnoses.length > 0 ? 0 : null
-        let activeCauseId = null
+        let activeCauseId = 0
         set({
             isLoading: false,
             errors: diagnoses,
@@ -74,7 +82,7 @@ const useDebuggerStore: StateCreator<
     },
 
     chooseError: (error: number) => {
-        set({activeErrorId: error, activeCauseId: null})
+        set({activeErrorId: error, activeCauseId: 0})
     },
 
     chooseFix: (error: number, cause: number | null) => {
@@ -109,6 +117,8 @@ const useEditorStore: StateCreator<
 > = (set, get) => ({
     highlights: [],
     previousHighlights: null,
+    dirty: false,
+    setDirty (dirty) { set({dirty})},
     setHighlights() {
         let activeErrorId = get().activeErrorId
         let activeCauseId = get().activeCauseId

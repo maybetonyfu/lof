@@ -1,0 +1,8 @@
+fastapi
+uvicorn[standard]
+swiplserver
+z3-solver
+networkx
+devtools
+ujson
+pydantic

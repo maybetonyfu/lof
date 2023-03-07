@@ -35,10 +35,10 @@ export interface FileStore {
     fileList: string[],
     buffer: string,
     openedFile: null | string,
-    writeFile: (f: string) => Promise<void>,
+    writeFile: () => Promise<void>,
     readFile: (name: string) => Promise<void>,
     setFileList: () => Promise<void>
-
+    setBuffer: (string) => void
 }
 
 export interface DebuggerStore {
@@ -59,10 +59,12 @@ export interface DebuggerStore {
 
 export interface EditorStore {
     highlights: Highlight[],
+    dirty: bool,
     previousHighlights: null | Highlight[]
     setHighlights: () => void
     pushHighlights: (highlights: Highlight[]) => void
     popHighlights: () => void
+    setDirty: (bool) => void
 }
 
 

@@ -90,12 +90,8 @@ class PlInterface(Enum):
 
 class Prolog(ContextDecorator):
     def __init__(self, interface: PlInterface, file: Optional[str] = None):
-        self.file = file
-        self.prelude = [
-            'type_of_length(T, {}) :- T = function(list(X), int)',
-            'type_of_map(T, {}) :- T = function(function(A, B), function(list(A), list(B)))',
-            'type_of_id(T, {}) :- T = function(A, A)'
-        ]
+        self.file: str | None = file
+        self.prelude: str = (Path(__file__).parent.parent / 'prolog' / 'prelude.pl').as_posix()
         self.clauses: list[Clause] = []
         self.queries: list[Term] = []
         self.predicates: list[tuple[str, int]] = []
@@ -154,15 +150,22 @@ class Prolog(ContextDecorator):
             f.write(self.generate_script())
         # prelude = [f'assert(({prelude}))' for prelude in self.prelude]
         abolishes = self.generate_abolishes()
-        consult_query = ','.join(abolishes + ['consult(prelude)'] + [ f"consult({Path(self.file).stem})"] + [q.__str__() for q in self.queries])
+        consult_query = ','.join(['style_check(-singleton)'] +
+                                 abolishes +
+                                 [f"consult('{self.prelude}')"] +
+                                 [f"consult('{self.file}')"] +
+                                 [q.__str__() for q in self.queries])
         return self.prolog_thread.query(consult_query)
 
     def run_console(self):
         asserts = self.generate_asserts()
-        # prelude = [f'assert(({prelude}))' for prelude in self.prelude]
-
         abolishes = self.generate_abolishes()
-        consult_query = ','.join(abolishes +  ['consult(prelude)']  + asserts + [q.__str__() for q in self.queries])
+        consult_query = ','.join(['style_check(-singleton)'] +
+                                 abolishes +
+                                 [f"consult('{self.prelude}')"]  +
+                                 asserts +
+                                 [q.__str__() for q in self.queries])
+
         return self.prolog_thread.query(consult_query)
 
     def run_raw_query(self, raw: str):
@@ -171,6 +174,8 @@ class Prolog(ContextDecorator):
 
 if __name__ == "__main__":
     with Prolog(interface=PlInterface.Console) as prolog:
-        r = prolog.run_raw_query('member(X, [[a,b,c], [b | Xs]])')
+        path = (Path(__file__).parent.parent / 'prolog' / 'prelude.pl').as_posix()
+        print(str(path))
+        r = prolog.run_raw_query(f'''style_check(-discontiguous),consult('{path}'),member(X, [[a,b,c], [b | Xs]])''')
         # r = prolog.run()
         print(r)

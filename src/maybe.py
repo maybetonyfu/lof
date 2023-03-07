@@ -20,3 +20,6 @@ class Maybe(Generic[T], BaseModel):
 
 nothing = Maybe.nothing()
 just = Maybe.just
+
+a : Maybe[int] = nothing
+b : Maybe[int] = just(3)

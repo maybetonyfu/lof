@@ -24,17 +24,15 @@ import {
 } from "@chakra-ui/react";
 import {BiFileFind} from 'react-icons/bi'
 import {FaRegQuestionCircle} from 'react-icons/fa'
-const pluralize = (word: string, n: number) => {
-    if (n == 1) {
-        return word
-    } else {
-        return word + 's'
-    }
-}
+import Success from "./Success";
 
 const Code = ({children, ...props}: any) => {
     return <Text
+        as={'span'}
+        borderRadius={'md'}
         display={'inline-block'}
+        h={6}
+        lineHeight={6}
         px={0.5}
         fontFamily={'JetBrains Mono'} {...props}>{children}</Text>
 }
@@ -47,12 +45,13 @@ const Type = ({sig, ...props}: any) => {
     }, [sig])
     return (<Popover>
         <PopoverTrigger>
-            <HStack bg={'blackAlpha.300'} spacing={0.5} display={'inline-block'} px={1}>
-
-                <Text fontFamily={'JetBrains Mono'} px={0.5}  mx={1} display={'inline-block'}>
-                    {sig}</Text>
-                <Icon as={FaRegQuestionCircle} color={'backAlpha.700'} />
-            </HStack>
+            <Box display={'inline-block'}>
+                <Flex bg={'blackAlpha.300'} w={'fit-content'} borderRadius={'md'} h={6} align={'center'} px={0.5}>
+                    <Text fontFamily={'JetBrains Mono'} display={'inline-block'}>
+                        {sig}</Text>
+                    <Icon boxSize={4} as={FaRegQuestionCircle} color={'backAlpha.700'}/>
+                </Flex>
+            </Box>
 
         </PopoverTrigger>
         <PopoverContent color='white' bg='blue.800' borderColor='blue.800'>
@@ -93,8 +92,7 @@ const Hint = ({fix}: { fix: Fix }) => {
             <Code
                 _hover={{background: 'yellow.300'}}
                 onMouseEnter={() => {
-                    console.log('mouse over')
-                    let loc = decls.find(decl => decl.name ===  fix.mismatch_decl)?.loc
+                    let loc = decls.find(decl => decl.name === fix.mismatch_decl)?.loc
                     pushHighlights([{span: loc as Span, marker: 'marker-secondary'}])
                 }}
                 onMouseLeave={() => {
@@ -107,31 +105,30 @@ const Hint = ({fix}: { fix: Fix }) => {
                   _hover={{
                       background: "yellow.300",
                   }}
-                onMouseEnter={() => {
-                    console.log('mouse over')
-                    pushHighlights([{span: usageLoc as Span, marker: 'marker-secondary'}])
-                }}
-                onMouseLeave={() => {
-                    popHighlights()
-                }}
+                  onMouseEnter={() => {
+                      console.log('mouse over')
+                      pushHighlights([{span: usageLoc as Span, marker: 'marker-secondary'}])
+                  }}
+                  onMouseLeave={() => {
+                      popHighlights()
+                  }}
             ><Icon as={BiFileFind}/> line {usageLoc[0][0]}</Code>
         </>)
 
 
     } else {
         if (fixType === 'Term') {
-            after = (<>an instance of <Type sig={inferredType}/>
-            </>)
+            after = (<>an instance of <Type sig={inferredType}/></>)
 
         } else {
             after = (<Type sig={inferredType}/>)
         }
     }
-    return (<Box width={'100%'}>
+    return (<Text w={'100%'} bg={'white'} lineHeight={8} p={1.5} borderRadius={'lg'}>
         Change
         {before}
         to {after}{condition}
-    </Box>)
+    </Text>)
 
 }
 const Suggestions = () => {
@@ -149,83 +146,45 @@ const Suggestions = () => {
     }
 }
 
-const DeclView = ({decl, changed}: { decl: Decl, changed: boolean }) => {
-    let pushHighlights = useAppStore((state: AppStore) => state.pushHighlights)
-    let popHighlights = useAppStore((state: AppStore) => state.popHighlights)
 
-    let ref = React.useRef(null)
-    let hasType = decl.type !== null
-    let DeclType = <Text
-        color={hasType ? 'black' : 'white'}
-        bg={hasType ? 'green.300' : 'red.400'} ref={ref} h={7} px={2} flex={1}>{hasType ? decl.type : 'unknown'}</Text>
-    React.useEffect(() => {
-        let currentRef = ref.current as any
-        currentRef.classList.remove('pulsing')
-        setTimeout(() => {
-            currentRef.classList.add('pulsing')
-        }, 50)
-
-    }, [decl.type])
-    return (<Flex width={'100%'} bg={'purple.400'}>
-        <Text bg={'gray.200'}
-              h={7}
-              px={2}
-              _hover={{
-                  background: 'yellow.300'
-            }
-              }
-              onMouseEnter={() => {
-                  pushHighlights(
-                      [{span: decl.loc, marker: 'marker-secondary'}]
-                  )
-              }}
-              onMouseLeave={() => {
-                  popHighlights()
-              }}
-        >{decl.name.split('_')[0]}</Text><Flex flex={1}>{DeclType}</Flex>
-    </Flex>)
-}
-
-const Decls = ({errorId}: {errorId: number}) => {
-
+const ResultTypes = () => {
     let errors = useAppStore((state: AppStore) => state.errors)
     let activeErrorId = useAppStore((state: AppStore) => state.activeErrorId)
     let activeCauseId = useAppStore((state: AppStore) => state.activeCauseId)
-    console.log(errorId)
-    console.log(activeCauseId)
-    let decls : Decl[] = []
-    if (activeCauseId === null) {
-        decls = (errors[activeErrorId as number].decls)
+    if (activeErrorId !== null && activeCauseId !== null) {
+        let decls = errors[activeErrorId].causes[activeCauseId].decls
+        return (<Flex direction={'column'} align={'flex-start'}>
+            {decls.map(decl => (
+                <Text key={decl.name} my={1} px={3} py={0.5} borderRadius={'lg'} bg={'white'}
+                      fontFamily={'JetBrains Mono'}>
+                    {decl.name} :: {decl.type}
+                </Text>))}
+
+        </Flex>)
     } else {
-        decls = (errors[activeErrorId as number].causes[activeCauseId].decls)
+        return null
     }
+}
 
-    let [oldDecls, setOldDecls]  = React.useState<Decl[]>([])
-    let [changed, setChanged]  = React.useState<boolean[]>([])
+const Explanation = () => {
+    let errors = useAppStore((state: AppStore) => state.errors)
+    let activeErrorId = useAppStore((state: AppStore) => state.activeErrorId)
+    if (activeErrorId !== null) {
+        let currentError = errors[activeErrorId]
+        let decls = currentError.decls.map(d => d.name)
 
-    console.log(decls.map(decl => decl.type))
+        return (<Text as={'span'}>The error occurs because the{' '}
+                {decls.length === 1 ? 'expression' : 'expressions'}{' '}
+                {decls.map(decl => <Text
+                    key ={decl}
+                    color={'white'}
+                    as={'span'} px={2}
+                    borderRadius={'sm'} display={'inline-block'} bg={"blackAlpha.700"}>{decl}</Text>)} can be inferred
+                to have conflicting types.
+            </Text>
+        )
+    } else return null
 
-    React.useEffect(() => {
-        let _changed =
-                decls.map((decl, i) => {
-                    if (!oldDecls[i]) {
-                        return true
-                    } else if (oldDecls[i].type === decl.type) {
-                        return false
-                    }   else {
-                        return true
-                    }
-                })
-        setChanged(_changed)
-        setOldDecls(decls)
-        }, [decls]
-    )
-
-    return (<Box>
-        <VStack>
-            {decls.map(((decl, i) => <DeclView decl={decl} changed={changed[i]} key={i}/>))}
-        </VStack>
-    </Box>)
 }
 
 const Diagnosis = ({diagnosis, errorId}: { diagnosis: Diagnosis, errorId: number }) => {
@@ -235,8 +194,7 @@ const Diagnosis = ({diagnosis, errorId}: { diagnosis: Diagnosis, errorId: number
     let setHighlights = useAppStore((state: AppStore) => state.setHighlights)
     return (
         <TabPanel>
-            <Text mb={2}>An error occurred when assigning types to the following expressions:</Text>
-            <Decls errorId ={errorId}/>
+            <Explanation/>
             <Text mt={4} mb={2}>Possible places to fix this error:</Text>
             <VStack w={'100%'}>
                 {diagnosis.causes.map((cause: Cause, i: number) => {
@@ -245,14 +203,8 @@ const Diagnosis = ({diagnosis, errorId}: { diagnosis: Diagnosis, errorId: number
                         <VStack w={'100%'} key={i} spacing={0} boxShadow={'md'} border={1}>
                             <Box
                                 onClick={_ => {
-                                    if (active) {
-                                        chooseFix(errorId, null);
-                                        setHighlights()
-                                    } else {
-                                        chooseFix(errorId, i);
-                                        setHighlights()
-                                    }
-
+                                    chooseFix(errorId, i);
+                                    setHighlights()
                                 }}
                                 w={'100%'} h={8} bg={active ? 'blackAlpha.800' : 'blackAlpha.600'}>
                                 <Flex justify={'start'} h={8} p={1} align={'middle'}>
@@ -260,22 +212,23 @@ const Diagnosis = ({diagnosis, errorId}: { diagnosis: Diagnosis, errorId: number
                                         {cause.suggestions.map((suggestion, i) => (
                                             <Text
                                                 bg={active ? 'blue.500' : 'gray.100'}
-                                                color={ active ? 'white' : 'black' }
+                                                color={active ? 'white' : 'black'}
                                                 key={i} px={2}>
                                                 {suggestion.original_text}
                                             </Text>))}
                                     </HStack>
                                     <Spacer/>
-                                    {/*<Button colorScheme={'whiteAlpha'} size={"xs"}>*/}
-                                    {/*    {active ? 'Ignore changes' :  'Preview changes'}*/}
-                                    {/*</Button>*/}
+
                                 </Flex>
                             </Box>
 
                             {
                                 active ? <Box w={'100%'} p={1} bg={'blackAlpha.200'}>
-                                    <Heading my={1} size={'sm'}>How to fix:</Heading>
+                                    <Text my={1}>To fix this error:</Text>
                                     <Suggestions/>
+                                    <Text my={2}>With this change, the following types will be
+                                        inferred:</Text>
+                                    <ResultTypes/>
                                 </Box> : <></>
                             }
                         </VStack>
@@ -284,35 +237,47 @@ const Diagnosis = ({diagnosis, errorId}: { diagnosis: Diagnosis, errorId: number
                 })}
             </VStack>
 
-
         </TabPanel>
     )
 }
 const Debugger = () => {
     const errors = useAppStore((state: AppStore) => state.errors)
     const chooseError = useAppStore((state: AppStore) => state.chooseError)
+    const setHighlights = useAppStore((state: AppStore) => state.setHighlights)
     const isLoading = useAppStore((state: AppStore) => state.isLoading)
+
     if (isLoading) {
         return <Stack>
             <Skeleton height='45px'/>
             <Skeleton height='120px'/>
         </Stack>
     }
-    return (
-        <Box>
-            <Tabs onChange={(index) => chooseError(index)} >
-                <TabList>
-                    {errors.map((_, i: number) => <Tab key={i}> Error {i + 1} </Tab>)}
-                </TabList>
-                <TabPanels>
-                    {errors.map((diagnosis: Diagnosis, i) => <Diagnosis
-                        key={i}
-                        diagnosis={diagnosis}
-                        errorId={i}
-                    />)}
-                </TabPanels>
-            </Tabs>
-        </Box>)
+
+    if (errors.length > 0) {
+        return (
+            <Box>
+                <Tabs onChange={(index) => {
+                    chooseError(index);
+                    setHighlights()
+                }
+
+                }>
+                    <TabList>
+                        {errors.map((_, i: number) => <Tab key={i}> Error {i + 1} </Tab>)}
+                    </TabList>
+                    <TabPanels>
+                        {errors.map((diagnosis: Diagnosis, i) => <Diagnosis
+                            key={i}
+                            diagnosis={diagnosis}
+                            errorId={i}
+                        />)}
+                    </TabPanels>
+                </Tabs>
+            </Box>)
+    } else {
+        return <Success></Success>
+    }
+
 };
 
 export default Debugger

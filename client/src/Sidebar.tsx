@@ -8,8 +8,11 @@ import {
 function Entry({file}: any) {
     let openedFile = useAppStore((state: any) => state.openedFile)
     let readFile = useAppStore((state: any) => state.readFile)
+    let typeCheck = useAppStore((state: any) => state.typeCheck)
+    let setHighlights = useAppStore((state: any) => state.setHighlights)
     let active = openedFile === file
-    return (<Button w={'100%'} colorScheme={active ? 'blue' : 'gray' } onClick={_ => readFile(file)}>
+    return (<Button w={'100%'} colorScheme={active ? 'blue' : 'gray' }
+                    onClick={_ => readFile(file).then(typeCheck).then(setHighlights)}>
         {file}
     </Button>)
 }

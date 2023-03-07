@@ -2,3 +2,5 @@ node_modules
 .idea
 venv
 __pycache__
+tmp/*
+!tmp/.gitkeep

@@ -16,11 +16,19 @@ import {AppStore} from "./global";
 
 const themeExt = EditorView.theme({
     "&": {height: "100%", fontSize: '17px'},
-    ".marker-mute": {background: "var(--chakra-colors-gray-200)"},
+    ".marker-mute": {
+        background: "var(--chakra-colors-blackAlpha-700)",
+        padding: '0 3px',
+        color: "white",
+        borderRadius: '2px'
+    }
+    ,
     ".marker-active": {
         background: "var(--chakra-colors-blue-500)",
+        padding: '0 3px',
         textDecoration: 'line-through',
         textDecorationThickness: '2px',
+        borderRadius: '2px',
         textDecorationColor: "var(--chakra-colors-red-500)",
         color: "white"},
     ".marker-secondary": {background: "var(--chakra-colors-yellow-300)"},
@@ -33,10 +41,10 @@ const keymapExt = keymap.of([{
     key: "Mod-s",
     preventDefault: true,
     run: (view: EditorView) => {
-        let newText = view.state.doc.sliceString(0, view.state.doc.length)
-        useAppStore.getState().writeFile(newText)
+        useAppStore.getState().writeFile()
             .then(_ => useAppStore.getState().typeCheck())
             .then(_ => useAppStore.getState().setHighlights())
+
         return true
     }
 }])
@@ -78,6 +86,7 @@ const highlightExt: StateField<DecorationSet> = StateField.define({
 
 function App() {
     let document = useAppStore((state: AppStore) => state.buffer)
+    let setBuffer = useAppStore((state: AppStore) => state.setBuffer)
     let editorRef: React.MutableRefObject<null | EditorView> = React.useRef(null)
     let highlights = useAppStore((state: AppStore) => state.highlights)
 
@@ -98,10 +107,13 @@ function App() {
     return (
         <CodeMirror
             value={document}
-            height="100vh"
+            height="100%"
             extensions={[themeExt, keymapExt, highlightExt]}
             onCreateEditor={(view: EditorView, _) => {
                 editorRef.current = view
+            }}
+            onChange = {(value) => {
+                setBuffer(value)
             }}
         />
     );

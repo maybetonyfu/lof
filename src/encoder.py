@@ -75,5 +75,5 @@ def decode(text: str) -> str:
 
 if __name__ == '__main__':
     print(
-        decode(encode('uuvsj<*?>xyz')) == 'uuvsj<*?>xyz'
+        decode(encode('uuvsj<*?>xyz')) == 'uuvsj<*?>xyz',
     )

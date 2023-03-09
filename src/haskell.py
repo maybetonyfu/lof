@@ -4,7 +4,7 @@ from subprocess import run
 import ujson
 from typing import Any, TypeAlias, Iterator
 from src.encoder import encode, decode
-from devtools import debug
+# from devtools import debug
 
 from src.prolog import Prolog, Term, atom, var, struct, Clause, PlInterface
 from src.maybe import Maybe, nothing, just
@@ -39,6 +39,7 @@ def type_from(value: str | dict, mapping: dict[str, str | int], type_classes: di
             letter = mapping['alphabet'][mapping['index']]
             mapping['index'] = mapping['index'] + 1
             return letter
+
         case 'int':
             return 'Int'
         case 'char':
@@ -47,16 +48,15 @@ def type_from(value: str | dict, mapping: dict[str, str | int], type_classes: di
             return 'Float'
         case 'bool':
             return 'Bool'
-
         case 'unit':
             return '()'
+
         case {'functor': 'list', 'args': [x]}:
             x_type = type_from(x, mapping, type_classes)
             return f'[{x_type}]'
 
         case {'functor': 'adt', 'args': args}:
-            con = args[0]
-            return ' '.join([con] + [type_from(arg, mapping, type_classes) for arg in args[1:]])
+            return ' '.join([type_from(arg, mapping, type_classes) for arg in args])
 
         case {'functor': 'function', 'args': args}:
             arg0 = args[0]
@@ -67,7 +67,7 @@ def type_from(value: str | dict, mapping: dict[str, str | int], type_classes: di
             return ' -> '.join(args_type)
 
         case _:
-            if value[0].isupper():
+            if value[0].isupper():  # Prolog Variables
                 if mapping.get(value, False):
                     letter = mapping[value]
                 else:
@@ -75,7 +75,7 @@ def type_from(value: str | dict, mapping: dict[str, str | int], type_classes: di
                     mapping[value] = letter
                     mapping['index'] = mapping['index'] + 1
                 return letter
-            elif value[0].islower():
+            elif value[0].islower():  # Prolog Atoms
                 return value[0].upper() + value[1:]
             else:
                 raise NotImplementedError(value)
@@ -186,9 +186,9 @@ class System:
     parser_bin = str(project_dir / "bin" / "haskell-parser.exe") if platform() == 'Windows' else str(
         project_dir / "bin" / "haskell-parser")
 
-    def __init__(self, code_dir, prolog):
+    def __init__(self, code_dir, prolog_instance):
         self.code_dir = code_dir
-        self.prolog: Prolog = prolog
+        self.prolog: Prolog = prolog_instance
         self.prelude: set[str] = set(generate_prelude())
         self.file_content: dict[str, str] = {'': ''}
         self.variable_counter: int = 0
@@ -284,6 +284,8 @@ class System:
         return self.solve(rules) is not False
 
     def diagnose(self) -> Iterator[Diagnosis]:
+        print('[', ','.join([r.json() for r in self.rules]), ']')
+
         for error in list(reversed(self.tc_errors)):
             all_rule_ids = set().union(*[mus.rules for mus in error.mus_list])
             all_rules = [self.rules[rid] for rid in all_rule_ids]
@@ -350,8 +352,11 @@ class System:
         for ast, file in zip(asts, files):
             self.file_content[file] = (Path(self.code_dir) / file).read_text()
             self.check_node(ast, atom('true'), '')
-        r = self.solve({r.rid for r in self.rules if not r.is_ambient()})
-        if r:
+
+        for rule in self.rules:
+            print(rule.json())
+        prolog_result = self.solve({r.rid for r in self.rules if not r.is_ambient()})
+        if prolog_result:
             return []
         else:
             marco = Marco(rules={r.rid for r in self.rules if not r.is_ambient()}, sat_fun=self.solve_bool)
@@ -366,9 +371,9 @@ class System:
         other_mcses = [error.mcs_list[0].rules for error in self.tc_errors if error.error_id != error_id]
         all_mcses = current_mcs.union(*other_mcses)
         result = self.solve({r.rid for r in self.rules if r.rid not in all_mcses})
-
         types = {decode(key[1:]) if key.startswith('_') else decode(key): term_to_type(value) for key, value in
                  result[0].items()}
+        # print(types)
         return types
 
     def get_name(self, node, toplevel: bool) -> str:
@@ -409,6 +414,40 @@ class System:
             case {'tag': 'Module', 'contents': [ann, _, _, _, decls]}:
                 for decl in decls:
                     self.check_node(decl, term, head, toplevel=True)
+
+            case {'tag': "DataDecl", 'contents': [ann, _, _, head, con_decls, derivings]}:
+                vs = []
+
+                def get_head_name(head, vs):
+                    match head:
+                        case {'tag': 'DHead', 'contents': [ann, name]}:
+                            return name['contents'][1]
+                        case {'tag': 'DHApp', "contents": [ann, h, tv]}:
+                            vs.insert(0, var('_' + tv['contents'][1]['contents'][1]))
+                            print(ujson.dumps(tv))
+                            return get_head_name(h, vs)
+                        case _:
+                            raise NotImplementedError()
+
+                name = get_head_name(head, vs)
+                name = name[0].lower() + name[1:]
+
+                adt_var = struct('adt', atom(name), *vs)
+                print(ujson.dumps(con_decls))
+                for con_decl in con_decls:
+                    decl = con_decl[3]
+                    if decl['tag'] == 'ConDecl':
+                        [ann, name, types] = decl['contents']
+                        con_name = self.get_name(name, toplevel=True)
+                        con_var = self.bind(con_name)
+                        self.variables.add(con_name)
+                        arg_vars = self.bind_n(len(types), con_name)
+                        for t_ast, t_var in zip(types, arg_vars):
+                            self.check_node(t_ast, t_var, con_name)
+                        self.add_rule(T == con_var, con_name, ann, watch=con_var, rule_type=RuleType.Decl)
+                        self.add_ambient_rule(con_var == fun_of(*arg_vars, adt_var), con_name)
+                    else:
+                        raise NotImplementedError()
 
             case {'tag': 'PatBind', 'contents': [ann, pat, rhs, _]}:
                 match pat:
@@ -583,7 +622,8 @@ class System:
                             self.add_rule(term == t_bool, head, ann, watch=term, rule_type=RuleType.Type)
 
                         case t:
-                            self.add_rule(term == atom(t[0].lower() + t[1:]), head, ann, watch=term, rule_type=RuleType.Type)
+                            self.add_rule(term == atom(t[0].lower() + t[1:]), head, ann, watch=term,
+                                          rule_type=RuleType.Type)
                             # raise NotImplementedError
                 else:
                     raise NotImplementedError
@@ -663,12 +703,12 @@ class System:
 
 
 if __name__ == "__main__":
-    file = (Path(__file__).parent.parent / "tmp" / "test" / 'program.pl').as_posix()
-    with Prolog(interface=PlInterface.File, file=file) as prolog:
+    prolog_file = (Path(__file__).parent.parent / "tmp" / "test" / 'program.pl').as_posix()
+    with Prolog(interface=PlInterface.File, file=prolog_file) as prolog:
         base_dir = str(Path(__file__).parent.parent / "tmp" / "test")
         system = System(
             code_dir=base_dir,
-            prolog=prolog
+            prolog_instance=prolog
         )
-        r = system.type_check()
-        print(r)
+        diagnoses = system.type_check()
+        print(diagnoses)

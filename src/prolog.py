@@ -1,23 +1,25 @@
 from swiplserver import *
-from typing import Optional
 from contextlib import ContextDecorator
 from pathlib import Path
 from enum import Enum
 from pydantic import BaseModel
 
 
-# from devtools import debug
-
 class Kind(Enum):
     Atom = "Atom"
     Var = "Var"
     Struct = "Struct"
     Array = "Array"
-
+    String = "String"
 
 class Term(BaseModel):
     value: str | dict | list
     kind: Kind
+
+    @classmethod
+    def string(cls, content: str):
+        value = f"'{content}"
+        return cls(value=value, kind=Kind.String)
 
     @classmethod
     def atom(cls, name: str):
@@ -42,7 +44,10 @@ class Term(BaseModel):
         return cls(value=value, kind=Kind.Array)
 
     def __str__(self):
-        return json_to_prolog(self.value)
+        if self.kind == Kind.String:
+            return f"'{self.value}'"
+        else:
+            return json_to_prolog(self.value)
 
     def __repr__(self):
         return self.__str__()
@@ -57,9 +62,10 @@ struct = Term.struct
 array = Term.array
 succeed = atom('true')
 fail = atom('false')
+nil = atom('nil')
 
 
-def cons(x: Term, xs: Term):
+def cons(x: Term, xs: Term) -> Term:
     return struct('[|]', x, xs)
 
 
@@ -73,11 +79,11 @@ class Clause(BaseModel):
 
     def __str__(self):
         head = self.head.__str__()
-        body = ','.join([b.__str__() for b in self.body])
+        body = ',\n  '.join([b.__str__() for b in self.body])
         if len(body) == 0:
             return head
         else:
-            return f'{head} :- {body}'
+            return f'{head} :-\n  {body}'
 
     def __repr__(self):
         return self.__str__()
@@ -89,11 +95,13 @@ class PlInterface(Enum):
 
 
 class Prolog(ContextDecorator):
-    def __init__(self, interface: PlInterface, file: Optional[str] = None):
-        self.file: str | None = file
-        self.prelude: str = (Path(__file__).parent.parent / 'prolog' / 'prelude.pl').as_posix()
+    def __init__(self, interface: PlInterface, file: Path):
+        self.file: Path = file
+        self.builtin: Path = Path(__file__).parent.parent / 'prolog' / 'builtin.pl'
+        self.prelude: Path = file.parent / 'Prelude.pl'
         self.clauses: list[Clause] = []
         self.queries: list[Term] = []
+        self.imports: list[Term] = []
         self.predicates: list[tuple[str, int]] = []
         self.interface: PlInterface = interface
 
@@ -107,13 +115,26 @@ class Prolog(ContextDecorator):
         self.mqi.stop()
 
     def generate_script(self) -> str:
-        return '\n'.join([c.__str__() + '.' for c in self.clauses])
+        module_name = "user_" + self.file.stem
+        pubs = []
+        for c in self.clauses:
+            value: dict = c.head.value
+            predicate = value['functor']
+            pubs.append(f'{predicate}/2')
+        pub_string = ','.join(pubs)
+        header = f":- module({module_name}, [{pub_string}])."
+        imports = '\n'.join([':- ' + m.__str__() + '.' for m in self.imports])
+        clauses = '\n'.join([c.__str__() + '.' for c in self.clauses])
+        return '\n'.join([header, imports, clauses])
 
     def set_clauses(self, clauses: list[Clause]):
         self.clauses = clauses
 
     def add_clause(self, clause: Clause):
         self.clauses.append(clause)
+
+    def add_import(self, imp: Term):
+        self.imports.append(imp)
 
     def add_clauses(self, clauses: list[Clause]):
         self.clauses += clauses
@@ -145,15 +166,18 @@ class Prolog(ContextDecorator):
             self.predicates.append((predicate, 2))
         return abolishes
 
-    def run_file(self):
+    def generate_file(self):
         with open(self.file, mode="w") as f:
             f.write(self.generate_script())
-        # prelude = [f'assert(({prelude}))' for prelude in self.prelude]
+
+    def run_file(self):
+
         abolishes = self.generate_abolishes()
         consult_query = ','.join(['style_check(-singleton)'] +
                                  abolishes +
-                                 [f"consult('{self.prelude}')"] +
-                                 [f"consult('{self.file}')"] +
+                                 [f"consult('{self.builtin.as_posix()}')"] +
+                                 [f"consult('{self.prelude.as_posix()}')"] +
+                                 [f"consult('{self.file.as_posix()}')"] +
                                  [q.__str__() for q in self.queries])
         return self.prolog_thread.query(consult_query)
 
@@ -162,7 +186,7 @@ class Prolog(ContextDecorator):
         abolishes = self.generate_abolishes()
         consult_query = ','.join(['style_check(-singleton)'] +
                                  abolishes +
-                                 [f"consult('{self.prelude}')"]  +
+                                 # [f"consult('{self.prelude}')"]  +
                                  asserts +
                                  [q.__str__() for q in self.queries])
 
@@ -173,9 +197,9 @@ class Prolog(ContextDecorator):
 
 
 if __name__ == "__main__":
-    with Prolog(interface=PlInterface.Console) as prolog:
+    with Prolog(interface=PlInterface.File, file=Path('./test.pl')) as prolog:
         path = (Path(__file__).parent.parent / 'prolog' / 'prelude.pl').as_posix()
         print(str(path))
-        r = prolog.run_raw_query(f'''style_check(-discontiguous),consult('{path}'),member(X, [[a,b,c], [b | Xs]])''')
+        r = prolog.run_raw_query(f'''style_check(-singleton),consult('{path}'),member(X, [[a,b,c], [b | Xs]])''')
         # r = prolog.run()
         print(r)

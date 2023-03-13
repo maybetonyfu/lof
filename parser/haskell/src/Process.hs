@@ -41,12 +41,12 @@ parsePrograms = do
       writeIORef resultRef (Just (lefts results))
 
 parseProgram :: FilePath -> RIO Program (Either (String, SrcLoc) (Module SrcSpanInfo))
-parseProgram file = do
+parseProgram filePath = do
   rootDir <- view pathL
-  fileContent <- readFileUtf8 (normalise rootDir </> normalise file)
+  fileContent <- readFileUtf8 (normalise rootDir </> normalise filePath)
   logDebug (display fileContent)
   let pResult = parseModuleWithMode parseMode (T.unpack fileContent)
-      parseMode = defaultParseMode {parseFilename = file}
+      parseMode = defaultParseMode {parseFilename = filePath}
   case pResult of
     ParseOk hModule -> do
       return (Right hModule)
@@ -64,9 +64,8 @@ ensureModuleNames = do
 
 annotateScopes :: RIO Program ()
 annotateScopes = do
-  baseEnv <- liftIO loadBase
   modules <- readIORefFromLens astL
-  let names = resolve modules baseEnv
+  let names = resolve modules M.empty
   asts <- readIORefFromLens astL
   let newASTs = map (annotate names) asts
   scopedAstRef <- view scopedAstL

@@ -1,8 +1,5 @@
-sum' [] = []
-sum' (x:xs) = x + sum' xs
+import Data.List
 
-f u =
-  case u of
-   3 -> 3
-   4 -> '4'
-   '5' -> 2
+x :: [Maybe Char]
+x =  map id ['a', 'b', 'c']
+

@@ -1,6 +1,6 @@
 import React from "react"
 import useAppStore from "./state";
-import {AppStore, Diagnosis, Cause, Fix, Span, Decl} from "./global";
+import {AppStore, Diagnosis, Cause, Fix, Span, Decl, Loc} from "./global";
 import {
     Box,
     Tabs,
@@ -92,8 +92,8 @@ const Hint = ({fix}: { fix: Fix }) => {
             <Code
                 _hover={{background: 'yellow.300'}}
                 onMouseEnter={() => {
-                    let loc = decls.find(decl => decl.name === fix.mismatch_decl)?.loc
-                    pushHighlights([{span: loc as Span, marker: 'marker-secondary'}])
+                    let loc = decls.find(decl => decl.name === fix.mismatch_decl)?.loc as Loc
+                    pushHighlights([{span: loc[1] as Span, marker: 'marker-secondary'}])
                 }}
                 onMouseLeave={() => {
                     popHighlights()
@@ -107,7 +107,7 @@ const Hint = ({fix}: { fix: Fix }) => {
                   }}
                   onMouseEnter={() => {
                       console.log('mouse over')
-                      pushHighlights([{span: usageLoc as Span, marker: 'marker-secondary'}])
+                      pushHighlights([{span: (usageLoc as Loc)[1], marker: 'marker-secondary'}])
                   }}
                   onMouseLeave={() => {
                       popHighlights()

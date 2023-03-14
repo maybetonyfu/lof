@@ -1,6 +1,7 @@
 import {create, StateCreator} from 'zustand'
 import {FileStore, DebuggerStore, Diagnosis, EditorStore, Span, Highlight} from "./global";
-import { customAlphabet  } from 'nanoid'
+import {customAlphabet} from 'nanoid'
+
 const nanoid = customAlphabet('1234567890abcdefghijklmnopqrstuvwxyz', 15)
 
 const user_id = nanoid()
@@ -13,9 +14,9 @@ const useFileStore: StateCreator<
     fileList: [],
     openedFile: null,
     buffer: "",
-    setBuffer: (buffer:string) => set({buffer, dirty: true}),
+    setBuffer: (buffer: string) => set({buffer, dirty: true}),
     readFile: async (file: string) => {
-        let response = await fetch(`/api/file/${file}?user_id=${user_id}` )
+        let response = await fetch(`/api/file/${file}?user_id=${user_id}`)
         let file_text: string = await response.text()
         set({
             openedFile: file,
@@ -35,9 +36,7 @@ const useFileStore: StateCreator<
         return undefined
     },
     setFileList: async () => {
-        let response = await fetch(`/api/ls?user_id=${user_id}`, {
-
-        })
+        let response = await fetch(`/api/ls?user_id=${user_id}`, {})
         let fileList: string[] = await response.json()
         set({fileList})
     },
@@ -56,7 +55,7 @@ const useDebuggerStore: StateCreator<
     activeCauseId: null,
     suggestions: [],
     previewEnabled: false,
-    typeCheck: async () => {
+    typeCheck: async (file) => {
         set({
             isLoading: true,
             highlights: [],
@@ -64,7 +63,8 @@ const useDebuggerStore: StateCreator<
             activeCauseId: null,
             dirty: false
         })
-        let response = await fetch(`/api/type_check?user_id=${user_id}`)
+        console.log(file)
+        let response = await fetch(`/api/type_check/${file}?user_id=${user_id}`)
         let diagnoses: Diagnosis[] = await response.json()
         let activeErrorId = diagnoses.length > 0 ? 0 : null
         let activeCauseId = 0
@@ -118,7 +118,9 @@ const useEditorStore: StateCreator<
     highlights: [],
     previousHighlights: null,
     dirty: false,
-    setDirty (dirty) { set({dirty})},
+    setDirty(dirty) {
+        set({dirty})
+    },
     setHighlights() {
         let activeErrorId = get().activeErrorId
         let activeCauseId = get().activeCauseId
@@ -127,12 +129,12 @@ const useEditorStore: StateCreator<
             let all_locs = error.locs
             let cause_loc = activeCauseId === null ? [] : error.causes[activeCauseId].locs
             let highlights_all = all_locs
-                .filter(span => !cause_loc.some(cause_span => intersection(span, cause_span)))
-                .map(span => {
-                    return {span, marker: 'marker-mute'}
+                .filter(loc => !cause_loc.some(cause_loc => intersection(loc[1], cause_loc[1])))
+                .map(loc => {
+                    return {span: loc[1], marker: 'marker-mute'}
                 })
-            let highlights_cause = cause_loc.map(span => {
-                return {span, marker: 'marker-active'}
+            let highlights_cause = cause_loc.map(loc => {
+                return {span: loc[1], marker: 'marker-active'}
             })
             set({highlights: [...highlights_cause, ...highlights_all,]})
         }

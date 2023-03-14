@@ -66,9 +66,17 @@ def type_from(value: str | dict, mapping: dict[str, str | int], type_classes: di
             x_type = type_from(x, mapping, type_classes).strip()
             return f'[{x_type}]'
 
-        # case {'functor': 'adt', 'args': [{'functor': '[|]', 'args': ['function', x]}]}:
-        #     x_type = type_from(x, mapping, type_classes).strip()
-        #     return f'[{x_type}]'
+        case {'functor': 'adt', 'args': [{'functor': '[|]', 'args': ['function', x]}]}:
+            lhs = x['args'][0]
+            rhs = x['args'][1]
+            match lhs:
+                case {'functor': 'adt', 'args': [{'functor': '[|]', 'args': ['function', _]}]}:
+                    lhs_type = '(' + type_from(lhs, mapping, type_classes).strip() + ')'
+                case _:
+                    lhs_type = type_from(lhs, mapping, type_classes)
+
+            rhs_type = type_from(rhs, mapping, type_classes)
+            return f'{lhs_type} -> {rhs_type}'
 
         case {'functor': 'adt', 'args': args}:
             return ' '.join([type_from(arg, mapping, type_classes) for arg in args])
@@ -339,6 +347,7 @@ class System:
     def generate_intermediate(self, rules: set[int]):
         self.prolog.set_queries([])
         self.prolog.set_clauses([])
+        self.prolog.set_imports([])
         clause_map: dict[str, list[Term]] = {v: [] for v in self.variables}
         active_rules = [r for r in self.rules if r.rid in rules or r.is_ambient()]
         for r in active_rules:
@@ -357,12 +366,11 @@ class System:
         for rule in self.rules:
             if rule.meta.head == 'module':
                 self.prolog.add_import(rule.body)
-
         self.prolog.generate_file()
 
     def marshal(self):
         self.file_content = self.hs_file_path.read_text()
-        self.check_node(ast, atom('true'), 'module')
+        self.check_node(self.ast, atom('true'), 'module')
 
     def type_check(self) -> list[Diagnosis]:
         prolog_result = self.solve({r.rid for r in self.rules if not r.is_ambient()})
@@ -426,13 +434,12 @@ class System:
         match node:
             case {'tag': 'Module', 'contents': [ann, _, _, imports, decls]}:
                 for im in imports:
-                    module_name:str = im['importModule'][1]
+                    module_name: str = im['importModule'][1]
                     prolog_file = '/'.join(module_name.split('.')) + '.pl'
                     prolog_file_path = (self.hs_file_path.parent / prolog_file).as_posix()
                     term = Term(value={'functor': 'use_module', 'args': [
-                                       Term(value = prolog_file_path, kind = Kind.String)
-                                    ]}, kind=Kind.Struct )
-                    print(term.__str__())
+                        Term(value=prolog_file_path, kind=Kind.String)
+                    ]}, kind=Kind.Struct)
                     self.add_ambient_rule(term, head)
 
                 for decl in decls:
@@ -616,8 +623,15 @@ class System:
             # Types
             case {'tag': 'TyApp', 'contents': [ann, t1, t2]}:
                 [v1, v2] = self.bind_n(2, head)
-                self.add_rule(term == adt(v1, v2), head, ann, watch=term, rule_type=RuleType.Type)
-                self.check_node(t1, v1, head)
+                self.add_rule(term == adt(v1, [v2]), head, ann, watch=term, rule_type=RuleType.Type)
+                match t1:
+                    case {'tag': 'TyCon', 'contents': [_, qname]}:
+                        type_literal = qname['contents'][1]['contents'][1]
+                        type_name = type_literal[0].lower() + type_literal[1:]
+                        self.add_ambient_rule(v1 == atom(type_name), head)
+                    case _:
+                        raise NotImplementedError()
+
                 self.check_node(t2, v2, head)
 
             case {'tag': 'TyCon', 'contents': [ann, qname]}:
@@ -660,6 +674,9 @@ class System:
                 var_name = name['contents'][1]
                 self.add_rule(term == var('_' + var_name), head, ann, watch=term, rule_type=RuleType.Type)
 
+            case {'tag': 'TyParen', 'contents': [_, ty]}:
+                self.check_node(ty, term, head)
+
             # Patterns
             case {'tag': 'PVar', 'contents': [ann, name]}:
                 p_name = self.get_name(name, toplevel)
@@ -679,8 +696,15 @@ class System:
             case {'tag': "PParen", "contents": [ann, p]}:
                 self.check_node(p, term, head)
 
-            case {'tag': 'PApp', 'contents': [ann, pname, pargs]}:
-                raise NotImplementedError()
+            case {'tag': 'PApp', 'contents': [ann, pname, p_args]}:
+                constructor = self.get_name(pname, toplevel)
+                agrs_vars = self.bind_n(len(p_args), head)
+                self.add_rule(var('_' + constructor) == fun_of(*agrs_vars, term), head, ann, watch=term,
+                              rule_type=RuleType.App)
+                free_var = self.fresh()
+                self.add_ambient_rule(struct('type_of_' + constructor, var('_' + constructor), free_var), head)
+                for arg_ast, arg_var in zip(p_args, agrs_vars):
+                    self.check_node(arg_ast, arg_var, head)
 
             case {'tag': 'PInfixApp', 'contents': [ann, p1, op, p2]}:
                 op_name = self.get_name(op, toplevel)
@@ -735,7 +759,7 @@ if __name__ == "__main__":
             continue
         else:
             prolog_file = file[:-3] + '.pl'
-            with Prolog(interface=PlInterface.File, file=base_dir / prolog_file) as prolog:
+            with Prolog(interface=PlInterface.File, file=base_dir / prolog_file, base_dir=base_dir) as prolog:
                 system = System(
                     ast=ast,
                     hs_file=base_dir / file,
@@ -747,7 +771,7 @@ if __name__ == "__main__":
     for ast, file in zip(asts, files):
         if file == to_check_file:
             prolog_file = file[:-3] + '.pl'
-            with Prolog(interface=PlInterface.File, file=base_dir / prolog_file) as prolog:
+            with Prolog(interface=PlInterface.File, file=base_dir / prolog_file, base_dir=base_dir) as prolog:
                 system = System(
                     ast=ast,
                     hs_file=base_dir / file,
@@ -755,5 +779,4 @@ if __name__ == "__main__":
                 )
                 system.marshal()
                 diagnoses = system.type_check()
-                debug(diagnoses)
-
+                print(diagnoses)

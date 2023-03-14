@@ -12,7 +12,7 @@ function Entry({file}: any) {
     let setHighlights = useAppStore((state: any) => state.setHighlights)
     let active = openedFile === file
     return (<Button w={'100%'} colorScheme={active ? 'blue' : 'gray' }
-                    onClick={_ => readFile(file).then(typeCheck).then(setHighlights)}>
+            onClick={_ => readFile(file).then((_:any) => typeCheck(file)).then(setHighlights)}>
         {file}
     </Button>)
 }

@@ -1,22 +1,22 @@
 export type Span = [[number, number], [number, number]]
-
+export type Loc = [string, Span]
 
 
 export interface Diagnosis {
     causes: Cause []
-    locs: Span[]
+    locs: Loc[]
     decls: Decl[]
 }
 
 export interface Decl {
     name: string,
     type: string | null,
-    loc: Span
+    loc: Loc
 }
 
 export interface Cause {
     suggestions: Fix[],
-    locs: Span[],
+    locs: Loc[],
     decls: Decl[]
 }
 
@@ -27,7 +27,7 @@ export interface Fix {
     is_mismatch_decl: boolean
     mismatch_decl: string | null
     mismatch_usage_type: string | null
-    mismatch_usage_loc: Span  | null
+    mismatch_usage_loc: Loc  | null
 
 }
 
@@ -44,7 +44,7 @@ export interface FileStore {
 export interface DebuggerStore {
     chooseFix: (errorId: number, causeId: number | null) => void,
     chooseError: (number) => void,
-    typeCheck: () => Promise<void>,
+    typeCheck: (file: string) => Promise<void>,
     searchType: (string) => Promise<string[]>
     togglePreview: () => void,
     isLoading: boolean,

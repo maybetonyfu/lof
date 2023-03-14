@@ -95,10 +95,10 @@ class PlInterface(Enum):
 
 
 class Prolog(ContextDecorator):
-    def __init__(self, interface: PlInterface, file: Path):
+    def __init__(self, interface: PlInterface, file: Path, base_dir: Path):
         self.file: Path = file
         self.builtin: Path = Path(__file__).parent.parent / 'prolog' / 'builtin.pl'
-        self.prelude: Path = file.parent / 'Prelude.pl'
+        self.prelude: Path = base_dir / 'Prelude.pl'
         self.clauses: list[Clause] = []
         self.queries: list[Term] = []
         self.imports: list[Term] = []
@@ -136,6 +136,9 @@ class Prolog(ContextDecorator):
     def add_import(self, imp: Term):
         self.imports.append(imp)
 
+    def set_imports(self, qs: list[Term]):
+        self.imports = qs
+
     def add_clauses(self, clauses: list[Clause]):
         self.clauses += clauses
 
@@ -171,12 +174,12 @@ class Prolog(ContextDecorator):
             f.write(self.generate_script())
 
     def run_file(self):
-
+        is_prelude = self.file.stem == 'Prelude'
         abolishes = self.generate_abolishes()
         consult_query = ','.join(['style_check(-singleton)'] +
                                  abolishes +
                                  [f"consult('{self.builtin.as_posix()}')"] +
-                                 [f"consult('{self.prelude.as_posix()}')"] +
+                                 ([] if is_prelude else [f"consult('{self.prelude.as_posix()}')"]) +
                                  [f"consult('{self.file.as_posix()}')"] +
                                  [q.__str__() for q in self.queries])
         return self.prolog_thread.query(consult_query)

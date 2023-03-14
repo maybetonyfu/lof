@@ -42,7 +42,7 @@ const keymapExt = keymap.of([{
     preventDefault: true,
     run: (view: EditorView) => {
         useAppStore.getState().writeFile()
-            .then(_ => useAppStore.getState().typeCheck())
+            .then(_ => useAppStore.getState().typeCheck(useAppStore.getState().openedFile as string))
             .then(_ => useAppStore.getState().setHighlights())
 
         return true

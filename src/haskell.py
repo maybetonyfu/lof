@@ -11,7 +11,6 @@ from src.marco import Marco, Error
 from pydantic import BaseModel
 from pathlib import Path
 from platform import platform
-from devtools import debug
 
 Point: TypeAlias = tuple[int, int]
 Span: TypeAlias = tuple[Point, Point]
@@ -33,7 +32,6 @@ t_bool = adt(atom('bool'), [])
 t_char = atom('char')
 t_int = atom('int')
 t_float = atom('float')
-
 T = var('T')
 
 
@@ -211,10 +209,14 @@ class System:
         self.ast: dict = ast
         self.hs_file_path: Path = hs_file
         self.prolog: Prolog = prolog_instance
+
         self.file_content: str | None = None
         self.variable_counter: int = 0
         self.variables: set[str] = set()  # Variables that are heads in clauses
-        self.free_vars: dict[str, list[Term]] = {}  # (head, Intermediate variables)
+        self.free_vars: dict[str, list[Term]] = defaultdict(list)  # (head, Intermediate variables).
+        # This is useful because we want
+        self.closures: list[tuple[str, str]] = []
+        self.named_vars: dict[str, list[Term]] = defaultdict(list)  # (head, named variables).
         self.rules: list[Rule] = []
         self.tc_errors: list[Error] = []
 
@@ -355,17 +357,36 @@ class System:
                 clause_map[r.meta.head] = clause_map[r.meta.head] + [r.body]
 
         for head, body in clause_map.items():
-            frees = Term.array(*self.free_vars.get(head, []))
+            frees = Term.array(*self.free_vars.get(head, []), *self.named_vars[head])
             self.prolog.add_clause(Clause(head=struct('type_of_' + head, T, frees), body=body))
 
         for h in self.variables:
             var_term = var('_' + h)
-            frees = Term.array(*self.free_vars.get(h, []))
+            # print(self.named_vars[h])
+            frees = Term.array(*self.free_vars.get(h, []), *[var('_') for v in self.named_vars[h]])
             self.prolog.add_query(struct('type_of_' + h, var_term, frees))
+
+        for parent, child in self.closures:
+            if parent == 'module': continue
+            # For parent
+            free_vars = [var('_') for _ in self.free_vars.get(parent, [])]
+            named_vars = [var(v.value + '_' + parent) for v in self.named_vars[parent]]
+            parent_rule = struct('type_of_' + parent, var('_'), Term.array(*free_vars, *named_vars))
+            # Child rule
+            free_vars = [var('_') for _ in self.free_vars.get(child, [])]
+            named_vars = [var(v.value + '_' + parent) for v in self.named_vars[child]]
+            child_rule = struct('type_of_' + child, var('_' + child + '_' + parent), Term.array(*free_vars, *named_vars))
+
+            self.prolog.add_query(parent_rule)
+            self.prolog.add_query(child_rule)
+            # print(parent_rule)
+            # print(child_rule)
+
 
         for rule in self.rules:
             if rule.meta.head == 'module':
                 self.prolog.add_import(rule.body)
+
         self.prolog.generate_file()
 
     def marshal(self):
@@ -483,6 +504,7 @@ class System:
                 match pat:
                     case {'tag': 'PVar', 'contents': [ann, name]}:
                         var_name = self.get_name(name, toplevel)
+                        self.closures.append((head, var_name))
                         var_pat = self.bind(var_name)
                         self.variables.add(var_name)
                         self.add_rule(T == var_pat, var_name, ann, var_pat, rule_type=RuleType.Decl)
@@ -493,6 +515,7 @@ class System:
             case {'tag': 'FunBind', 'contents': [ann, matches]}:
                 [ann, f_name, f_args, _, _] = matches[0]['contents']
                 fun_name = self.get_name(f_name, toplevel)
+                self.closures.append((head, fun_name))
                 self.variables.add(fun_name)
                 var_args = self.bind_n(len(f_args), fun_name)
                 var_rhs = self.bind(fun_name)
@@ -534,6 +557,7 @@ class System:
                     var_term = T
                 else:
                     var_term = var('_' + var_name)
+                    self.named_vars[head].append(var_term)
                     self.add_ambient_rule(struct('type_of_' + var_name, var_term, self.fresh()), head)
 
                 new_var = self.bind(head)
@@ -622,12 +646,14 @@ class System:
 
             # Types
             case {'tag': 'TyApp', 'contents': [ann, t1, t2]}:
+                v1: Term
+                v2: Term
                 [v1, v2] = self.bind_n(2, head)
                 self.add_rule(term == adt(v1, [v2]), head, ann, watch=term, rule_type=RuleType.Type)
                 match t1:
                     case {'tag': 'TyCon', 'contents': [_, qname]}:
-                        type_literal = qname['contents'][1]['contents'][1]
-                        type_name = type_literal[0].lower() + type_literal[1:]
+                        type_literal: str = qname['contents'][1]['contents'][1]
+                        type_name: str = type_literal[0].lower() + type_literal[1:]
                         self.add_ambient_rule(v1 == atom(type_name), head)
                     case _:
                         raise NotImplementedError()
@@ -681,6 +707,7 @@ class System:
             case {'tag': 'PVar', 'contents': [ann, name]}:
                 p_name = self.get_name(name, toplevel)
                 p_var = var('_' + p_name)
+                self.named_vars[head].append(p_var)
                 self.add_ambient_rule(p_var == term, head)
                 self.variables.add(p_name)
 

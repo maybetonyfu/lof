@@ -8,4 +8,6 @@ type_of_SYMcn(T, _) :-
   '='(FreshB24, adt('[|]'(function, '[|]'(FreshB25, '[|]'(FreshB26, nil))))),
   '='(FreshB22, adt('[|]'(function, '[|]'(FreshB23, '[|]'(FreshB24, nil))))).
 
-type_of_undefined(T, _) :- true.
+type_of_error(T, _) :- true.
+
+instance_of_num(int).

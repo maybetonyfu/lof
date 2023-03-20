@@ -1,3 +1,5 @@
+from typing import Iterator
+
 from swiplserver import *
 from contextlib import ContextDecorator
 from pathlib import Path
@@ -63,7 +65,7 @@ array = Term.array
 succeed = atom('true')
 fail = atom('false')
 nil = atom('nil')
-
+wildcard = var('_')
 
 def cons(x: Term, xs: Term) -> Term:
     return struct('[|]', x, xs)
@@ -173,9 +175,10 @@ class Prolog(ContextDecorator):
         with open(self.file, mode="w") as f:
             f.write(self.generate_script())
 
-    def run_file(self):
+    def run_file(self) -> bool | list[bool | dict]:
         is_prelude = self.file.stem == 'Prelude'
         abolishes = self.generate_abolishes()
+
         consult_query = ','.join(['style_check(-singleton)'] +
                                  abolishes +
                                  [f"consult('{self.builtin.as_posix()}')"] +
@@ -183,6 +186,7 @@ class Prolog(ContextDecorator):
                                  [f"consult('{self.file.as_posix()}')"] +
                                  [q.__str__() for q in self.queries])
         return self.prolog_thread.query(consult_query)
+
 
     def run_console(self):
         asserts = self.generate_asserts()
@@ -196,13 +200,15 @@ class Prolog(ContextDecorator):
         return self.prolog_thread.query(consult_query)
 
     def run_raw_query(self, raw: str):
-        return self.prolog_thread.query(raw)
-
+        # return self.prolog_thread.query(raw)
+        self.prolog_thread.query_async(raw, find_all=False)
+        result = self.prolog_thread.query_async_result()
+        self.prolog_thread.cancel_query_async()
+        return result
 
 if __name__ == "__main__":
-    with Prolog(interface=PlInterface.File, file=Path('./test.pl')) as prolog:
-        path = (Path(__file__).parent.parent / 'prolog' / 'prelude.pl').as_posix()
-        print(str(path))
-        r = prolog.run_raw_query(f'''style_check(-singleton),consult('{path}'),member(X, [[a,b,c], [b | Xs]])''')
+    with Prolog(interface=PlInterface.File, file=Path('./test.pl'), base_dir=Path(".")) as prolog:
+        r = prolog.run_raw_query(f'''member(a, X),member(b, X), X=[a]''')
+        # r2 = prolog.run_raw_query(f'''member(b, X)''')
         # r = prolog.run()
         print(r)

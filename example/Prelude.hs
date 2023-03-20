@@ -1,3 +1,7 @@
+module Prelude where
+
+undefined = error
+
 length :: [a] -> Int
 length = undefined
 

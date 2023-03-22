@@ -1,8 +1,10 @@
-fastapi
+fastapi~=0.89.1
 uvicorn[standard]
-swiplserver
+swiplserver~=1.0.2
 z3-solver
-networkx
-devtools
-ujson
-pydantic
+networkx~=3.0
+devtools~=0.10.0
+ujson~=5.7.0
+pydantic~=1.10.4
+SQLAlchemy~=2.0.3
+airium~=0.2.5

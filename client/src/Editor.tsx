@@ -30,7 +30,8 @@ const themeExt = EditorView.theme({
         textDecorationThickness: '2px',
         borderRadius: '2px',
         textDecorationColor: "var(--chakra-colors-red-500)",
-        color: "white"},
+        color: "white"
+    },
     ".marker-secondary": {background: "var(--chakra-colors-yellow-300)"},
     ".marker3": {background: "#5dffa2"},
     ".marker4": {background: "#c6e0ff"},
@@ -112,7 +113,7 @@ function App() {
             onCreateEditor={(view: EditorView, _) => {
                 editorRef.current = view
             }}
-            onChange = {(value) => {
+            onChange={(value) => {
                 setBuffer(value)
             }}
         />

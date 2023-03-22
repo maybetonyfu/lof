@@ -3,9 +3,11 @@ from enum import Enum
 from subprocess import run
 import ujson
 from typing import Any, TypeAlias, Iterator
+from airium import Airium
 from src.encoder import encode, decode
 from string import ascii_lowercase
-from src.prolog import Prolog, Term, atom, var, struct, Clause, PlInterface, cons, nil, Kind, wildcard
+from src.prolog import Prolog, Term, atom, var, struct, Clause, PlInterface, cons, nil, Kind, wildcard, \
+    prolog_list_to_list
 from src.maybe import Maybe, nothing, just
 from src.marco import Marco, Error
 from pydantic import BaseModel
@@ -27,7 +29,6 @@ def adt(con: Term, args: list[Term]) -> Term:
     return struct('adt', cons(con, unwrap(args)))
 
 
-
 # Special Atoms
 t_unit: Term = atom('unit')
 t_bool: Term = adt(atom('bool'), [])
@@ -41,81 +42,100 @@ instance_name: Term = var('InstanceName')
 T: Term = var('T')
 
 
-def instance_of(class_name: str, instance_var: Term) -> Term:
-    return struct('instance_of_' + class_name, instance_var, instance_name)
+def instance_of(class_name: str, instance_var: Term, inst_name: Term = instance_name) -> Term:
+    return struct('instance_of_' + class_name, instance_var, inst_name)
 
 
-def term_to_type(value: str | dict, name: str) -> str:
-    mapping = {
-        'alphabet': ascii_lowercase,
-        'index': 0
-    }
-    return type_from(value, name, mapping, defaultdict(list))
+def require(cls: str) -> [Term]:
+    return [T == struct('require', var('Classes')),
+            struct('member1', atom('class_' + cls), var('Classes')),
+            ]
 
 
-def type_from(value: str | dict, name: str, mapping: dict[str, str | int], type_classes: dict[str, list[str]]):
-    match value:
-        case '_':
-            letter = mapping['alphabet'][mapping['index']]
-            mapping['index'] = mapping['index'] + 1
-            return letter
-        # case 'missing_instance':
-        #     raise NotImplementedError()
-        case 'nil':
-            return ''
-        case 'int':
-            return 'Int'
-        case 'char':
-            return 'Char'
-        case 'float':
-            return 'Float'
-        case 'unit':
-            return '()'
+class Type:
+    letters = ascii_lowercase
 
-        case {'functor': 'adt', 'args': [{'functor': '[|]', 'args': ['list', x]}]}:
-            x_type = type_from(x, name, mapping, type_classes).strip()
-            return f'[{x_type}]'
+    def __init__(self, json: dict | str, name: str):
+        self.index = 0
+        self.mapping: dict[str: str] = {}
+        self.type_classes: dict[str, set[str]] = defaultdict(set)
+        self.name = name
+        self.type = self.from_json(json)
 
-        case {'functor': 'adt', 'args': [{'functor': '[|]', 'args': ['function', x]}]}:
-            lhs = x['args'][0]
-            rhs = x['args'][1]
-            match lhs:
-                case {'functor': 'adt', 'args': [{'functor': '[|]', 'args': ['function', _]}]}:
-                    lhs_type = '(' + type_from(lhs, name, mapping, type_classes).strip() + ')'
-                case _:
-                    lhs_type = type_from(lhs,name, mapping, type_classes)
 
-            rhs_type = type_from(rhs,name, mapping, type_classes)
-            return f'{lhs_type} -> {rhs_type}'
+    def make_letter(self):
+        letter = self.letters[self.index]
+        self.index += 1
+        return letter
 
-        case {'functor': 'adt', 'args': args}:
-            return ' '.join([type_from(arg, name,mapping, type_classes) for arg in args])
+    def from_json(self, value: dict | str):
+        match value:
+            case '_':
+                return self.make_letter()
+            case 'nil':
+                return ''
+            case 'int':
+                return 'Int'
+            case 'char':
+                return 'Char'
+            case 'float':
+                return 'Float'
+            case 'unit':
+                return '()'
+            case {'functor': 'adt', 'args': [{'functor': '[|]', 'args': ['list', x]}]}:
+                x_type = self.from_json(x).strip()
+                return f'[{x_type}]'
+            case {'functor': 'adt', 'args': [{'functor': '[|]', 'args': ['function', x]}]}:
+                args = prolog_list_to_list(x)
+                def is_function(prolog_json: dict | str):
+                    return (
+                            type(prolog_json) == dict and
+                            prolog_json.get('functor') == 'adt' and
+                            prolog_json.get('args', [{}])[0].get('args', [{}])[0] == 'function'
+                    )
+                arg_types = []
+                for i, arg in enumerate(args[:-1]):
+                    if is_function(arg) and i != len(args) - 2:
+                        arg_types.append('(' + self.from_json(arg) + ')')
+                    else:
+                        arg_types.append(self.from_json(arg))
 
-        case {'functor': '[|]', 'args': args}:
-            return ' '.join([type_from(arg, name,mapping, type_classes) for arg in args])
-
-        case {'functor': 'function', 'args': args}:
-            arg0 = args[0]
-            arg0_type = ('(' + type_from(arg0, name,mapping, type_classes) + ')') if type(arg0) == dict and arg0[
-                'functor'] == 'function' else type_from(arg0, name,mapping, type_classes)
-            arg1 = args[1]
-            args_type = [arg0_type] + [type_from(arg1,name, mapping, type_classes)]
-            return ' -> '.join(args_type)
-
-        case _:
-            # print(value)
-            if value[0].isupper():  # Prolog Variables
-                if mapping.get(value, False):
-                    letter = mapping[value]
-                else:
-                    letter = mapping['alphabet'][mapping['index']]
-                    mapping[value] = letter
-                    mapping['index'] = mapping['index'] + 1
+                return ' -> '.join(arg_types)
+            case {'functor': 'adt', 'args': args}:
+                return ' '.join([self.from_json(arg) for arg in args])
+            case {'functor': 'require', 'args': [class_pl_list]}:
+                class_list = prolog_list_to_list(class_pl_list)
+                classes = {cls[len('class_'):] for cls in class_list[:-1]}
+                letter = self.from_json(class_list[-1])
+                self.type_classes[letter] = self.type_classes[letter].union(classes)
                 return letter
-            elif value[0].islower():  # Prolog Atoms
-                return value[0].upper() + value[1:]
-            else:
-                raise NotImplementedError(value)
+            case {'functor': '[|]', 'args': args}:
+                return ' '.join([self.from_json(arg) for arg in args])
+            case _:
+                if value[0].isupper():  # Prolog Variables
+                    if self.mapping.get(value, False):
+                        letter = self.mapping[value]
+                    else:
+                        letter = self.make_letter()
+                        self.mapping[value] = letter
+                    return letter
+                elif value[0].islower():  # Prolog Atoms
+                    return value[0].upper() + value[1:]
+                else:
+                    raise NotImplementedError(value)
+
+    def __str__(self):
+        if len(self.type_classes) == 0:
+            return self.type
+        else:
+            context = []
+            for letter, classes in self.type_classes.items():
+                for cls in classes:
+                    context.append(f'{cls} {letter}')
+            return ', '.join(context) + ' => ' + self.type
+
+    def __repr__(self):
+        return self.__str__()
 
 
 def list_of(elem: Term) -> Term:
@@ -189,14 +209,14 @@ class FixType(Enum):
     Term = 'Term'
 
 
-class Fix(BaseModel):
-    fix_type: FixType
-    original_text: str
-    inferred_type: str
-    is_mismatch_decl: bool
-    mismatch_decl: str | None
-    mismatch_usage_type: str | None
-    mismatch_usage_loc: Loc | None
+# class Fix(BaseModel):
+#     fix_type: FixType
+#     original_text: str
+#     inferred_type: str
+#     is_mismatch_decl: bool
+#     mismatch_decl: str | None
+#     mismatch_usage_type: str | None
+#     mismatch_usage_loc: Loc | None
 
 
 class Decl(BaseModel):
@@ -205,11 +225,15 @@ class Decl(BaseModel):
     loc: Loc
 
 
+class Suggestion(BaseModel):
+    text: str
+    title: str
+
+
 class Cause(BaseModel):
-    suggestions: list[Fix]
+    suggestions: list[Suggestion]
     decls: list[Decl]
     locs: list[Loc]
-    total_fix_size: int
 
 
 class Diagnosis(BaseModel):
@@ -250,6 +274,7 @@ class System:
         self.named_vars: dict[str, list[Term]] = defaultdict(list)  # (head, named variables).
         self.rules: list[Rule] = []
         self.tc_errors: list[Error] = []
+        self.qualification: dict[str, int] = defaultdict(int)
 
     def reset(self):
         self.__init__(self.hs_file_path, self.ast, self.prolog)
@@ -327,7 +352,7 @@ class System:
 
             causes = []
             for mcs in error.mcs_list:
-                types: dict[str, str] = self.infer_type(error.error_id, mcs.setId)
+                types: dict[str, Type] = self.infer_type(error.error_id, mcs.setId)
                 mcs_rules = [self.rules[rid] for rid in mcs.rules]
                 suggestions = []
                 usages: dict[str, Rule] = {r.meta.var_string.value: r for r in all_rules
@@ -338,35 +363,50 @@ class System:
 
                 for rule in mcs_rules:
                     is_mismatch_decl = rule.meta.head.name in usages.keys()
-                    if is_mismatch_decl:
-                        usage_rule = usages[rule.meta.head.name]
-                        mismatch_usage_loc = usage_rule.meta.loc
-                        mismatch_usage_type = types[usage_rule.meta.watch.value.value]
-                    else:
-                        mismatch_usage_loc = None
-                        mismatch_usage_type = None
+                    is_type_change = rule.meta.type == RuleType.Type
+                    a = Airium(source_minify=True)
+                    with a.div(klass='suggestion'):
+                        if is_type_change and not is_mismatch_decl:
+                            a.span(_t='Change')
+                            a.span(_t=rule.meta.src_text.value, klass='code type primary')
+                            a.span(_t='to')
+                            a.span(_t=str(types[rule.meta.watch.value.value]), klass='code type')
+                        elif is_type_change and is_mismatch_decl:
+                            a.span(_t='Change')
+                            a.span(_t=rule.meta.src_text.value, klass='code type primary')
+                            a.span(_t='to')
+                            a.span(_t=str(types[rule.meta.watch.value.value]), klass='code type')
+                            a.span(_t=', because that the function')
+                            a.span(_t=rule.meta.head.name, klass='code term')
+                            a.span(_t="is used as")
+                            a.span(_t=str(types[usages[rule.meta.head.name].meta.watch.value.value]), klass='code type')
+                        elif not is_type_change and not is_mismatch_decl:
+                            a.span(_t='Change')
+                            a.span(_t=rule.meta.src_text.value, klass='code term primary')
+                            a.span(_t='to an instance of')
+                            a.span(_t=str(types[rule.meta.watch.value.value]), klass='code type')
+                        elif not is_type_change and is_mismatch_decl:
+                            a.span(_t='Change')
+                            a.span(_t=rule.meta.src_text.value, klass='code term primary')
+                            a.span(_t='to an instance of')
+                            a.span(_t=str(types[rule.meta.watch.value.value]), klass='code type')
+                            a.span(_t=', because that the function')
+                            a.span(_t=rule.meta.head.name, klass='code term')
+                            a.span(_t="is used as")
+                            a.span(_t=str(types[usages[rule.meta.head.name].meta.watch.value.value]), klass='code type')
 
-                    suggestions.append(Fix(
-                        fix_type=FixType.Type if rule.meta.type == RuleType.Type else FixType.Term,
-                        inferred_type=types[rule.meta.watch.value.value],
-                        original_text=rule.meta.src_text.value,
-                        is_mismatch_decl=is_mismatch_decl,
-                        mismatch_decl=rule.meta.head.name if is_mismatch_decl else None,
-                        mismatch_usage_loc=mismatch_usage_loc if is_mismatch_decl else None,
-                        mismatch_usage_type=mismatch_usage_type if is_mismatch_decl else None,
-                    ))
+                    suggestions.append(Suggestion(title=rule.meta.src_text.value, text=str(a)))
+
                 locs = [r.meta.loc for r in mcs_rules]
-                total_fix_size: int = sum([len(s.original_text) for s in suggestions])
                 cause = Cause(
-                    decls=list(map(lambda decl: Decl(name=decl.name, loc=decl.loc, type=types[decl.name]), all_decls)),
+                    decls=list(map(lambda decl: Decl(name=decl.name, loc=decl.loc, type=str(types[decl.name])), all_decls)),
                     suggestions=suggestions,
                     locs=locs,
-                    total_fix_size=total_fix_size
                 )
                 causes.append(cause)
 
             diagnosis = Diagnosis(decls=all_decls,
-                                  causes=sorted(causes, key=lambda c: (len(c.locs), c.total_fix_size)),
+                                  causes=causes,
                                   locs=[r.meta.loc for r in all_rules])
             yield diagnosis
 
@@ -389,14 +429,12 @@ class System:
                 clause_map[r.meta.head.name] = clause_map[r.meta.head.name] + [r.body]
 
         for head, body in clause_map.items():
-            # Add the second parameter in type_of_X(_, [A, B, C, D, ...])
-            frees = Term.array(*self.free_vars.get(head, []), *self.named_vars[head])
+            frees = Term.array(*self.free_vars.get(head, []), *self.named_vars[head], )
             self.prolog.add_clause(Clause(head=struct('type_of_' + head, T, frees), body=body))
 
         for h in self.variables:
             var_term = var('_' + h)
-            # print(self.named_vars[h])
-            frees = Term.array(*self.free_vars.get(h, []), *[var('_') for v in self.named_vars[h]])
+            frees = Term.array(*self.free_vars.get(h, []), *[var('_') for v in self.named_vars[h]], )
             self.prolog.add_query(struct('type_of_' + h, var_term, frees))
 
         for parent, child in self.closures:
@@ -415,12 +453,11 @@ class System:
             self.prolog.add_query(child_rule)
 
         for cls in self.classes:
-            clause = Clause(head=instance_of(cls, atom('missing_instance')),
-                            body=[instance_name == atom('class_' + cls)])
+            clause = Clause(head=instance_of(cls, T),
+                            body=require(cls))
             self.prolog.add_clause(clause)
             for r in self.rules:
-                if r.meta.head.type == HeadType.InstanceOf:
-
+                if r.meta.head.type == HeadType.InstanceOf and r.meta.head.name == cls:
                     clause_head = struct("instance_of_" + cls,
                                          T,
                                          wildcard,
@@ -448,13 +485,13 @@ class System:
             self.tc_errors = marco.tc_errors
             return list(self.diagnose())
 
-    def infer_type(self, error_id: int, mcs_id: int) -> dict[str, str]:
+    def infer_type(self, error_id: int, mcs_id: int) -> dict[str, Type]:
         tc_error = self.tc_errors[error_id]
         current_mcs = [mcs for mcs in tc_error.mcs_list if mcs.setId == mcs_id][0].rules
         other_mcses = [error.mcs_list[0].rules for error in self.tc_errors if error.error_id != error_id]
         all_mcses = current_mcs.union(*other_mcses)
         result = self.solve({r.rid for r in self.rules if r.rid not in all_mcses})
-        types = {decode(key[1:]) if key.startswith('_') else decode(key): term_to_type(value, key) for key, value in
+        types = {decode(key[1:]) if key.startswith('_') else decode(key): Type(value, key) for key, value in
                  result[0].items()}
         return types
 
@@ -495,7 +532,33 @@ class System:
                     case _:
                         raise NotImplementedError()
 
+    def get_context(self, node_ast) -> list[tuple[str, str]]:
+        def get_assertion(assertion):
+            type_app = assertion['contents'][1]
+            assert (type_app['tag'] == 'TyApp')
+            type_con = type_app['contents'][1]
+            type_var = type_app['contents'][2]
+            assert (type_con['tag'] == 'TyCon')
+            assert (type_var['tag'] == 'TyVar')
+
+            class_name: str = self.get_name(type_con['contents'][1], True)
+            var_name = type_var['contents'][1]['contents'][1]
+            return (class_name, var_name)
+        match node_ast:
+            case {'tag': 'CxSingle', 'contents': [_, assertion]}:
+                return [get_assertion(assertion)]
+
+            case {'tag': 'CxTuple', 'contents': [_, assertions]}:
+                return [get_assertion(assertion) for assertion in assertions]
+
+            case {'tag': 'CxEmpty', 'contents': [_, contexts]}:
+                return []
+            case _:
+                print(ujson.dumps(node_ast))
+                raise NotImplementedError("Not a context node")
+
     def get_head_name(self, node_ast, results: list[str]) -> list[str]:
+        # Node is DeclHead
         match node_ast:
             case {'tag': 'DHead', 'contents': [_, head_name]}:
                 head_name = self.get_name(head_name, toplevel=True)
@@ -562,7 +625,7 @@ class System:
                         name_bind = self.bind(name)
                         self.add_ambient_rule(var('_' + var_name) == name_bind, Head.type_of(name))
                         self.add_ambient_rule(
-                            instance_of(class_name, var('_' + var_name)),
+                            instance_of(class_name, var('_' + var_name), wildcard),
                             Head.type_of(name))
                     self.check_node(type_decl, var('_'), Head.type_of('module'), toplevel)
 
@@ -640,7 +703,7 @@ class System:
             case {'tag': 'Var', 'contents': [ann, qname]}:
                 var_name = self.get_name(qname, toplevel)
 
-                if var_name == head:
+                if var_name == head.name:
                     var_term = T
                 else:
                     var_term = var('_' + var_name)
@@ -657,7 +720,7 @@ class System:
             case {'tag': 'InfixApp', 'contents': [ann, exp1, op, exp2]}:
                 [op_ann, op_qname] = op['contents']
                 op_name = self.get_name(op_qname, toplevel)
-                if op_name == head:
+                if op_name == head.name:
                     op_var: Term = T
                 else:
                     op_var: Term = var('_' + op_name)
@@ -786,29 +849,20 @@ class System:
             case {'tag': 'TyVar', 'contents': [ann, name]}:
                 var_name = name['contents'][1]
                 self.add_rule(term == var('_' + var_name), head, ann, watch=term, rule_type=RuleType.Type)
-                # self.add_ambient_rule(struct('type_of_' + var_name, var('_' + var_name), self.fresh()), head)
 
             case {'tag': 'TyParen', 'contents': [_, ty]}:
                 self.check_node(ty, term, head)
 
-            case {'tag': 'TyForall', 'contents': [ann, _, context, t]}:
-                match context:
-                    case {'tag': 'CxSingle', 'contents': [ann, assertion]}:
-                        assert (assertion['tag'] == 'TypeA')
-                        type_app = assertion['contents'][1]
-                        assert (type_app['tag'] == 'TyApp')
-                        type_con = type_app['contents'][1]
-                        type_var = type_app['contents'][2]
-                        assert (type_con['tag'] == 'TyCon')
-                        assert (type_var['tag'] == 'TyVar')
-
-                        class_name = self.get_name(type_con['contents'][1], toplevel)
-                        var_name = self.get_name(type_var['contents'][1], toplevel)
-                        v_type = var('_' + var_name)
-                        rule = instance_of(class_name, v_type)
-                        self.add_rule(rule, head, ann, watch=type_var, rule_type=RuleType.Type)
-                    case _:
-                        raise NotImplementedError()
+            case {'tag': 'TyForall', 'contents': [ann, _, _context, t]}:
+                qualifications = self.get_context(_context)
+                for [class_name, type_var_name] in qualifications:
+                    v = self.bind(head.name)
+                    self.add_ambient_rule(v == var('_' + type_var_name), head)
+                    self.add_ambient_rule(
+                        instance_of(class_name, var('_' + type_var_name), wildcard),
+                        head
+                    )
+                self.check_node(t, term, head)
 
             # Patterns
             case {'tag': 'PVar', 'contents': [ann, name]}:
@@ -843,7 +897,7 @@ class System:
             case {'tag': 'PInfixApp', 'contents': [ann, p1, op, p2]}:
                 op_name = self.get_name(op, toplevel)
                 self.variables.add(op_name)
-                if op_name == head:
+                if op_name == head.name:
                     op_var = T
                 else:
                     op_var = var('_' + op_name)
@@ -888,19 +942,19 @@ if __name__ == "__main__":
     asts = [c['ast'] for c in parsed_data['contents']]
     files = [c['file'] for c in parsed_data['contents']]
 
-    for ast, file in zip(asts, files):
-        if file == to_check_file:
-            continue
-        else:
-            prolog_file = file[:-3] + '.pl'
-            with Prolog(interface=PlInterface.File, file=base_dir / prolog_file, base_dir=base_dir) as prolog:
-                system = System(
-                    ast=ast,
-                    hs_file=base_dir / file,
-                    prolog_instance=prolog
-                )
-                system.marshal()
-                system.generate_intermediate({r.rid for r in system.rules})
+    # for ast, file in zip(asts, files):
+    #     if file == to_check_file:
+    #         continue
+    #     else:
+    #         prolog_file = file[:-3] + '.pl'
+    #         with Prolog(interface=PlInterface.File, file=base_dir / prolog_file, base_dir=base_dir) as prolog:
+    #             system = System(
+    #                 ast=ast,
+    #                 hs_file=base_dir / file,
+    #                 prolog_instance=prolog
+    #             )
+    #             system.marshal()
+    #             system.generate_intermediate({r.rid for r in system.rules})
 
     for ast, file in zip(asts, files):
         if file == to_check_file:

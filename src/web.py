@@ -67,7 +67,7 @@ async def typecheck(file_path: str, user_id: str) -> list[Diagnosis]:
                 )
                 system.marshal()
                 diagnoses = system.type_check()
-                print(diagnoses)
+                # print(diagnoses)
                 return diagnoses
 
     # prolog_file = (Path(__file__).parent.parent / "tmp" / user_id / 'program.pl').as_posix()

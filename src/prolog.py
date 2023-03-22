@@ -14,6 +14,7 @@ class Kind(Enum):
     Array = "Array"
     String = "String"
 
+
 class Term(BaseModel):
     value: str | dict | list
     kind: Kind
@@ -66,6 +67,8 @@ succeed = atom('true')
 fail = atom('false')
 nil = atom('nil')
 wildcard = var('_')
+cut = atom('!')
+
 
 def cons(x: Term, xs: Term) -> Term:
     return struct('[|]', x, xs)
@@ -73,6 +76,16 @@ def cons(x: Term, xs: Term) -> Term:
 
 def unify(a: Term, b: Term):
     return struct('=', a, b)
+
+
+def prolog_list_to_list(pl_list: dict | str) -> list[dict | str]:
+    is_list = isinstance(pl_list, dict) and pl_list.get('functor') == '[|]'
+    if is_list:
+        head = pl_list['args'][0]
+        tail = pl_list['args'][1]
+        return [head] + prolog_list_to_list(tail)
+    else:
+        return [pl_list]
 
 
 class Clause(BaseModel):
@@ -187,7 +200,6 @@ class Prolog(ContextDecorator):
                                  [q.__str__() for q in self.queries])
         return self.prolog_thread.query(consult_query)
 
-
     def run_console(self):
         asserts = self.generate_asserts()
         abolishes = self.generate_abolishes()
@@ -205,6 +217,7 @@ class Prolog(ContextDecorator):
         result = self.prolog_thread.query_async_result()
         self.prolog_thread.cancel_query_async()
         return result
+
 
 if __name__ == "__main__":
     with Prolog(interface=PlInterface.File, file=Path('./test.pl'), base_dir=Path(".")) as prolog:

@@ -11,3 +11,6 @@ type_of_SYMcn(T, _) :-
 type_of_error(T, _) :- true.
 
 instance_of_num(int).
+
+member1(L,[L|_]) :- !.
+member1(L,[_|RS]) :- member1(L,RS).

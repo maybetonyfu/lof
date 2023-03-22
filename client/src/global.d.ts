@@ -15,7 +15,7 @@ export interface Decl {
 }
 
 export interface Cause {
-    suggestions: Fix[],
+    suggestions: Suggestion[],
     locs: Loc[],
     decls: Decl[]
 }
@@ -29,6 +29,11 @@ export interface Fix {
     mismatch_usage_type: string | null
     mismatch_usage_loc: Loc  | null
 
+}
+
+export interface Suggestion {
+    text: string
+    title: string
 }
 
 export interface FileStore {

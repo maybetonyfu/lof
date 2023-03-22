@@ -1,6 +1,6 @@
 import React from "react"
 import useAppStore from "./state";
-import {AppStore, Diagnosis, Cause, Fix, Span, Decl, Loc} from "./global";
+import {AppStore, Diagnosis, Cause, Suggestion} from "./global";
 import {
     Box,
     Tabs,
@@ -9,128 +9,13 @@ import {
     Tab,
     TabPanel,
     VStack,
-    Button,
     Text,
     Skeleton,
     Stack,
-    Popover,
-    PopoverTrigger,
-    PopoverContent,
-    PopoverHeader,
-    PopoverBody,
-    PopoverArrow,
-    PopoverCloseButton,
-    Heading, Flex, HStack, Spacer, Icon,
+    Flex, HStack, Spacer,
 } from "@chakra-ui/react";
-import {BiFileFind} from 'react-icons/bi'
-import {FaRegQuestionCircle} from 'react-icons/fa'
 import Success from "./Success";
 
-const Code = ({children, ...props}: any) => {
-    return <Text
-        as={'span'}
-        borderRadius={'md'}
-        display={'inline-block'}
-        h={6}
-        lineHeight={6}
-        px={0.5}
-        fontFamily={'JetBrains Mono'} {...props}>{children}</Text>
-}
-
-const Type = ({sig, ...props}: any) => {
-    let [fills, setFills] = React.useState<string[]>([])
-    let searchType = useAppStore((state: AppStore) => state.searchType)
-    React.useEffect(() => {
-        searchType(sig).then(types => setFills(types))
-    }, [sig])
-    return (<Popover>
-        <PopoverTrigger>
-            <Box display={'inline-block'}>
-                <Flex bg={'blackAlpha.300'} w={'fit-content'} borderRadius={'md'} h={6} align={'center'} px={0.5}>
-                    <Text fontFamily={'JetBrains Mono'} display={'inline-block'}>
-                        {sig}</Text>
-                    <Icon boxSize={4} as={FaRegQuestionCircle} color={'backAlpha.700'}/>
-                </Flex>
-            </Box>
-
-        </PopoverTrigger>
-        <PopoverContent color='white' bg='blue.800' borderColor='blue.800'>
-            <PopoverArrow bg='blue.800'/>
-            <PopoverCloseButton/>
-            <PopoverHeader>Type: {sig}</PopoverHeader>
-            <PopoverBody>
-                <Text>Possible values:</Text>
-                {
-                    fills.map((fill, i) => {
-                        return <Text key={i} {...props}>{fill}</Text>
-                    })
-
-                }</PopoverBody>
-        </PopoverContent>
-    </Popover>)
-}
-
-const Hint = ({fix}: { fix: Fix }) => {
-    let pushHighlights = useAppStore((state: AppStore) => state.pushHighlights)
-    let popHighlights = useAppStore((state: AppStore) => state.popHighlights)
-    let errors = useAppStore((state: AppStore) => state.errors)
-    let activeErrorId = useAppStore((state: AppStore) => state.activeErrorId)
-    let decls = errors[activeErrorId as number].decls
-    let fixType = fix.fix_type
-    let originalText = fix.original_text
-    let inferredType = fix.inferred_type
-    let isDecl = fix.is_mismatch_decl
-    let mismatch_decl = fix.mismatch_decl === null ? null : fix.mismatch_decl.split('_')[0]
-    let usageType = fix.mismatch_usage_type
-    let usageLoc = fix.mismatch_usage_loc
-    let condition = null
-    let before = <Code mx={1} bg={'blue.500'} color={'white'}>{originalText}</Code>
-    let after;
-    if (isDecl && usageType !== null && usageLoc !== null) {
-        after = fixType === 'Term' ? 'a different expression' : 'a different type'
-        condition = (<>, so that
-            <Code
-                _hover={{background: 'yellow.300'}}
-                onMouseEnter={() => {
-                    let loc = decls.find(decl => decl.name === fix.mismatch_decl)?.loc as Loc
-                    pushHighlights([{span: loc[1] as Span, marker: 'marker-secondary'}])
-                }}
-                onMouseLeave={() => {
-                    popHighlights()
-                }}
-                mx={1} bg={'blackAlpha.300'}> {mismatch_decl} </Code> can be used as
-            <Type sig={usageType}/>
-            on
-            <Code bg={'blackAlpha.300'}
-                  _hover={{
-                      background: "yellow.300",
-                  }}
-                  onMouseEnter={() => {
-                      console.log('mouse over')
-                      pushHighlights([{span: (usageLoc as Loc)[1], marker: 'marker-secondary'}])
-                  }}
-                  onMouseLeave={() => {
-                      popHighlights()
-                  }}
-            ><Icon as={BiFileFind}/> line {usageLoc[0][0]}</Code>
-        </>)
-
-
-    } else {
-        if (fixType === 'Term') {
-            after = (<>an instance of <Type sig={inferredType}/></>)
-
-        } else {
-            after = (<Type sig={inferredType}/>)
-        }
-    }
-    return (<Text w={'100%'} bg={'white'} lineHeight={8} p={1.5} borderRadius={'lg'}>
-        Change
-        {before}
-        to {after}{condition}
-    </Text>)
-
-}
 const Suggestions = () => {
     let errors = useAppStore((state: AppStore) => state.errors)
     let activeErrorId = useAppStore((state: AppStore) => state.activeErrorId)
@@ -138,14 +23,15 @@ const Suggestions = () => {
     if (activeErrorId !== null && activeCauseId !== null) {
         let suggestions = errors[activeErrorId].causes[activeCauseId].suggestions
         return (<VStack>
-            {suggestions.map((fix: Fix, i: number) => <Hint fix={fix} key={i}/>)}
+            {suggestions.map((suggestion: Suggestion, i: number) => (
+                <Box w="100%" bg={"white"} lineHeight={'180%'} px={3} py={1.5}
+                     dangerouslySetInnerHTML={{__html: suggestion.text}} key={i}></Box>))}
         </VStack>)
 
     } else {
         return (<> </>)
     }
 }
-
 
 const ResultTypes = () => {
     let errors = useAppStore((state: AppStore) => state.errors)
@@ -169,21 +55,23 @@ const ResultTypes = () => {
 const Explanation = () => {
     let errors = useAppStore((state: AppStore) => state.errors)
     let activeErrorId = useAppStore((state: AppStore) => state.activeErrorId)
-    if (activeErrorId !== null) {
-        let currentError = errors[activeErrorId]
-        let decls = currentError.decls.map(d => d.name)
+    if (activeErrorId === null) {
+        return null
+    }
+    let currentError = errors[activeErrorId]
+    let decls = currentError.decls.map(d => d.name)
 
-        return (<Text as={'span'}>The error occurs because the{' '}
-                {decls.length === 1 ? 'expression' : 'expressions'}{' '}
-                {decls.map(decl => <Text
-                    key ={decl}
-                    color={'white'}
-                    as={'span'} px={2}
-                    borderRadius={'sm'} display={'inline-block'} bg={"blackAlpha.700"}>{decl}</Text>)} can be inferred
-                to have conflicting types.
-            </Text>
-        )
-    } else return null
+    return (<Text as={'span'}>The error occurs because the{' '}
+            {decls.length === 1 ? 'expression' : 'expressions'}{' '}
+            {decls.map(decl => <Text
+                key={decl}
+                color={'white'}
+                as={'span'} px={2} mx={0.5}
+                borderRadius={'sm'} display={'inline-block'} bg={"blackAlpha.700"}>{decl}</Text>)} can be inferred
+            to have conflicting types.
+        </Text>
+    )
+
 
 }
 
@@ -214,7 +102,7 @@ const Diagnosis = ({diagnosis, errorId}: { diagnosis: Diagnosis, errorId: number
                                                 bg={active ? 'blue.500' : 'gray.100'}
                                                 color={active ? 'white' : 'black'}
                                                 key={i} px={2}>
-                                                {suggestion.original_text}
+                                                {suggestion.title}
                                             </Text>))}
                                     </HStack>
                                     <Spacer/>
@@ -236,7 +124,6 @@ const Diagnosis = ({diagnosis, errorId}: { diagnosis: Diagnosis, errorId: number
                     )
                 })}
             </VStack>
-
         </TabPanel>
     )
 }
@@ -253,30 +140,28 @@ const Debugger = () => {
         </Stack>
     }
 
-    if (errors.length > 0) {
-        return (
-            <Box>
-                <Tabs onChange={(index) => {
-                    chooseError(index);
-                    setHighlights()
-                }
-
-                }>
-                    <TabList>
-                        {errors.map((_, i: number) => <Tab key={i}> Error {i + 1} </Tab>)}
-                    </TabList>
-                    <TabPanels>
-                        {errors.map((diagnosis: Diagnosis, i) => <Diagnosis
-                            key={i}
-                            diagnosis={diagnosis}
-                            errorId={i}
-                        />)}
-                    </TabPanels>
-                </Tabs>
-            </Box>)
-    } else {
+    if (errors.length === 0) {
         return <Success></Success>
     }
+
+    return (
+        <Box>
+            <Tabs onChange={(index) => {
+                chooseError(index);
+                setHighlights()
+            }}>
+                <TabList>
+                    {errors.map((_, i: number) => <Tab key={i}> Error {i + 1} </Tab>)}
+                </TabList>
+                <TabPanels>
+                    {errors.map((diagnosis: Diagnosis, i) => <Diagnosis
+                        key={i}
+                        diagnosis={diagnosis}
+                        errorId={i}
+                    />)}
+                </TabPanels>
+            </Tabs>
+        </Box>)
 
 };
 

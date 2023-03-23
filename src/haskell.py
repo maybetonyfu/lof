@@ -42,7 +42,7 @@ instance_name: Term = var('InstanceName')
 T: Term = var('T')
 
 
-def instance_of(class_name: str, instance_var: Term, inst_name: Term = instance_name) -> Term:
+def instance_of(class_name: str, instance_var: Term, inst_name: Term = wildcard) -> Term:
     return struct('instance_of_' + class_name, instance_var, inst_name)
 
 
@@ -274,7 +274,7 @@ class System:
         self.named_vars: dict[str, list[Term]] = defaultdict(list)  # (head, named variables).
         self.rules: list[Rule] = []
         self.tc_errors: list[Error] = []
-        self.qualification: dict[str, int] = defaultdict(int)
+        self.super_classes: dict[str, list[str]] = defaultdict(list)
 
     def reset(self):
         self.__init__(self.hs_file_path, self.ast, self.prolog)
@@ -462,7 +462,9 @@ class System:
                                          T,
                                          wildcard,
                                          )
-                    self.prolog.add_clause(Clause(head=clause_head, body=[r.body]))
+                    super_classes = self.super_classes.get(cls, [])
+                    super_class_constraints = [instance_of(s, T) for s in super_classes]
+                    self.prolog.add_clause(Clause(head=clause_head, body=[r.body, *super_class_constraints]))
 
         for rule in self.rules:
             if rule.meta.head.name == 'module':
@@ -534,6 +536,8 @@ class System:
 
     def get_context(self, node_ast) -> list[tuple[str, str]]:
         def get_assertion(assertion):
+            if assertion['tag'] == 'ParenA':
+               assertion = assertion['contents'][1]
             type_app = assertion['contents'][1]
             assert (type_app['tag'] == 'TyApp')
             type_con = type_app['contents'][1]
@@ -603,8 +607,7 @@ class System:
                     [_, _, context, insHead] = instRule['contents']
                     class_name, type_ast = get_instance_head(insHead)
                     self.check_node(type_ast, T, Head.instance_of(class_name), toplevel=True)
-                    # print(class_name)
-                    # print(ujson.dumps(type_ast))
+
 
                 elif instRule['tag'] == 'IParen':
                     self.check_node({'tag': 'InstDecl', 'contents': [ann, None, instRule['contents'][1], instDecl]},
@@ -613,6 +616,10 @@ class System:
             case {"tag": "ClassDecl", 'contents': [ann, context, decl_head, _, decls]}:
                 [class_name, *vs_names] = self.get_head_name(decl_head, [])
                 self.classes.add(class_name)
+
+                super_classes: list[tuple[str, str]] = [] if context is None else self.get_context(context)
+                self.super_classes[class_name] = [cls[0] for cls in super_classes]
+
                 assert (len(vs_names) == 1)
                 var_name = vs_names[0]
                 for decl in decls:
@@ -623,6 +630,7 @@ class System:
                     for name in names:
                         name = self.get_name(name, toplevel)
                         name_bind = self.bind(name)
+
                         self.add_ambient_rule(var('_' + var_name) == name_bind, Head.type_of(name))
                         self.add_ambient_rule(
                             instance_of(class_name, var('_' + var_name), wildcard),
@@ -966,5 +974,6 @@ if __name__ == "__main__":
                     prolog_instance=prolog
                 )
                 system.marshal()
-                diagnoses = system.type_check()
-                print('[' + ','.join([d.json() for d in diagnoses]) + ']')
+                system.generate_intermediate({r.rid for r in system.rules})
+                # diagnoses = system.type_check()
+                # print('[' + ','.join([d.json() for d in diagnoses]) + ']')

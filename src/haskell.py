@@ -42,14 +42,76 @@ instance_name: Term = var('InstanceName')
 T: Term = var('T')
 
 
-def instance_of(class_name: str, instance_var: Term, inst_name: Term = wildcard) -> Term:
-    return struct('instance_of_' + class_name, instance_var, inst_name)
+def instance_of(class_name: str, instance_var: Term, utility_var: Term = wildcard) -> Term:
+    return struct('instance_of_' + class_name, instance_var, utility_var)
+
+
+def type_of(variable_name: str, type_var: Term, utility_var: Term = wildcard) -> Term:
+    return struct('type_of_' + variable_name, type_var, utility_var)
 
 
 def require(cls: str) -> [Term]:
     return [T == struct('require', var('Classes')),
             struct('member1', atom('class_' + cls), var('Classes')),
             ]
+
+
+class CallGraph:
+    def __init__(self):
+        self.graph: dict[str, set[tuple[str, str]]] = defaultdict(set)
+        self.closures: dict[str, set[tuple[str, str]]] = defaultdict(set)
+
+    def add_call(self, caller: str, callee: str, alias: str):
+        self.graph[caller].add((callee, alias))
+
+    def add_closure(self, parent: str, child: str, alias: str):
+        self.closures[parent].add((child, alias))
+
+    def has_usage(self, caller: str, callee: str) -> bool:
+        return callee in {name for name, alias in self.graph[caller]}
+
+    def get_usages(self, caller: str, callee: str) -> list[tuple[str, str]]:
+        return [(name, alias) for name, alias in self.graph[caller] if name == callee]
+
+    def all_usages(self) -> list[tuple[str, str, str]]:
+        usages = []
+        for caller, callees in self.graph.items():
+            usages.extend([(caller, callee, alias) for callee, alias in callees])
+        return usages
+
+    def is_ancestor_of(self, parent: str, child: str) -> bool:
+        return parent in self.get_ancestors(child)
+
+    def get_ancestors(self, name: str) -> set[str]:
+        ancestors = set()
+        for parent, children in self.closures.items():
+            if name in [c[0] for c in children] and parent != 'module':
+                ancestors.add(parent)
+                ancestors.update(self.get_ancestors(parent))
+        return ancestors
+
+    def get_declarer(self, child: str) -> str:
+        for parent, children in self.closures.items():
+            if child in [c[0] for c in children]:
+                return parent
+        return 'module'
+
+    def get_all_defined_names(self) -> set[str]:
+        names: set[str] = set()
+        for parent, children in self.closures.items():
+            if parent != 'module':
+                names.add(parent)
+            names.update([c[0] for c in children])
+        return names
+
+    def show(self):
+        print("Call Graph:")
+        for caller, callees in self.graph.items():
+            print(caller, '->', callees)
+
+        print("Closures:")
+        for parent, children in self.closures.items():
+            print(parent, '->', children)
 
 
 class Type:
@@ -61,7 +123,6 @@ class Type:
         self.type_classes: dict[str, set[str]] = defaultdict(set)
         self.name = name
         self.type = self.from_json(json)
-
 
     def make_letter(self):
         letter = self.letters[self.index]
@@ -87,12 +148,14 @@ class Type:
                 return f'[{x_type}]'
             case {'functor': 'adt', 'args': [{'functor': '[|]', 'args': ['function', x]}]}:
                 args = prolog_list_to_list(x)
+
                 def is_function(prolog_json: dict | str):
                     return (
                             type(prolog_json) == dict and
                             prolog_json.get('functor') == 'adt' and
                             prolog_json.get('args', [{}])[0].get('args', [{}])[0] == 'function'
                     )
+
                 arg_types = []
                 for i, arg in enumerate(args[:-1]):
                     if is_function(arg) and i != len(args) - 2:
@@ -260,24 +323,24 @@ class System:
     parser_bin = str(project_dir / "bin" / "haskell-parser.exe") if platform() == 'Windows' else str(
         project_dir / "bin" / "haskell-parser")
 
-    def __init__(self, hs_file, ast, prolog_instance):
+    def __init__(self, base_dir: Path, hs_file: Path, ast, prolog_instance):
         self.ast: dict = ast
+        self.base_dir: Path = base_dir
         self.hs_file_path: Path = hs_file
+        self.include_prelude = True
         self.prolog: Prolog = prolog_instance
-        self.classes: set[str] = set()
+        self.imports = []
         self.file_content: str | None = None
         self.variable_counter: int = 0
-        self.variables: set[str] = set()  # Variables that are heads in clauses
         self.free_vars: dict[str, list[Term]] = defaultdict(list)  # (head, Intermediate variables).
-        # This is useful because we want
-        self.closures: list[tuple[str, str]] = []
-        self.named_vars: dict[str, list[Term]] = defaultdict(list)  # (head, named variables).
         self.rules: list[Rule] = []
         self.tc_errors: list[Error] = []
+        self.classes: set[str] = set()
         self.super_classes: dict[str, list[str]] = defaultdict(list)
+        self.call_graph: CallGraph = CallGraph()
 
     def reset(self):
-        self.__init__(self.hs_file_path, self.ast, self.prolog)
+        self.__init__(self.base_dir, self.hs_file_path, self.ast, self.prolog)
 
     def fresh(self) -> Term:
         vid = self.variable_counter
@@ -399,7 +462,8 @@ class System:
 
                 locs = [r.meta.loc for r in mcs_rules]
                 cause = Cause(
-                    decls=list(map(lambda decl: Decl(name=decl.name, loc=decl.loc, type=str(types[decl.name])), all_decls)),
+                    decls=list(
+                        map(lambda decl: Decl(name=decl.name, loc=decl.loc, type=str(types[decl.name])), all_decls)),
                     suggestions=suggestions,
                     locs=locs,
                 )
@@ -421,37 +485,54 @@ class System:
         self.prolog.set_queries([])
         self.prolog.set_clauses([])
         self.prolog.set_imports([])
-        clause_map: dict[str, list[Term]] = {v: [] for v in self.variables}
+
+        defined_names = self.call_graph.get_all_defined_names()
+        clause_map: dict[str, list[Term]] = {v: [] for v in defined_names}
         active_rules = [r for r in self.rules if r.rid in rules or r.is_ambient()]
+
         for r in active_rules:
             # Add rules for type_of_XYZ(A, B) ...
             if r.meta.head.name != 'module' and r.meta.head.type == HeadType.TypeOf:
                 clause_map[r.meta.head.name] = clause_map[r.meta.head.name] + [r.body]
 
         for head, body in clause_map.items():
-            frees = Term.array(*self.free_vars.get(head, []), *self.named_vars[head], )
+            frees = Term.array(*self.free_vars.get(head, []))
             self.prolog.add_clause(Clause(head=struct('type_of_' + head, T, frees), body=body))
 
-        for h in self.variables:
+        for h in defined_names:
             var_term = var('_' + h)
-            frees = Term.array(*self.free_vars.get(h, []), *[var('_') for v in self.named_vars[h]], )
+            frees = Term.array(*self.free_vars.get(h, []))
             self.prolog.add_query(struct('type_of_' + h, var_term, frees))
 
-        for parent, child in self.closures:
-            if parent == 'module': continue
-            # For parent
-            free_vars = [var('_') for _ in self.free_vars.get(parent, [])]
-            named_vars = [var(v.value + '_' + parent) for v in self.named_vars[parent]]
-            parent_rule = struct('type_of_' + parent, var('_'), Term.array(*free_vars, *named_vars))
-            # Child rule
-            free_vars = [var('_') for _ in self.free_vars.get(child, [])]
-            named_vars = [var(v.value + '_' + parent) for v in self.named_vars[child]]
-            child_rule = struct('type_of_' + child, var('_' + child + '_' + parent),
-                                Term.array(*free_vars, *named_vars))
+        function_call_stacks = []
+        for caller, callees in self.call_graph.graph.items():
+            var_term = var('_' + caller)
+            callees_with_fresh_var = [(name, alias, self.fresh()) for (name, alias) in callees]
+            for (callee, alias, fresh_var) in callees_with_fresh_var:
+                free_vars = [fresh_var if v.value == alias else wildcard for v in self.free_vars.get(caller, [])]
+                callee_free_vars = Term.array(
+                    *(self.free_vars[callee])) if self.call_graph.is_ancestor_of(caller, callee) else wildcard
+                function_call_stacks.append(type_of(caller, var_term, Term.array(*free_vars)))
+                function_call_stacks.append(type_of(callee, fresh_var, callee_free_vars))
+        self.prolog.add_queries(function_call_stacks)
 
-            self.prolog.add_query(parent_rule)
-            self.prolog.add_query(child_rule)
+        # all_usages = self.call_graph.all_usages()
+        # for caller, callee, alias in all_usages:
+        #     usage_scope = caller
+        #     declarer = self.call_graph.get_declarer(callee)
+        #     if declarer != 'module' and self.call_graph.is_ancestor_of(declarer, usage_scope):
+        #         declare_alias = [i[1] for i in self.call_graph.closures[declarer] if i[0] == callee][0]
+        #         print(f"Clouser of var {callee}, declared in {declarer}, used in {usage_scope}")
+        #         fresh = var("ClosureFreeVar")
+        #
+        #         declare_scope = [key for key, values in self.free_vars.items() if declare_alias in [v.value for v in values]][0]
+        #         print("Decalared in: ", declare_scope)
+        #         delcare_free_vars = [fresh if v.value == declare_alias else wildcard for v in self.free_vars[declare_scope]]
+        #         usage_free_vars = [fresh if v.value == alias else wildcard for v in self.free_vars[usage_scope]]
+        #         self.prolog.add_query(type_of(declare_scope, var('_' + declare_scope), Term.array(*delcare_free_vars)))
+        #         self.prolog.add_query(type_of(usage_scope, var('_' + usage_scope), Term.array(*usage_free_vars)))
 
+        # Add rules for instance_of_XYZ(A, B) ...
         for cls in self.classes:
             clause = Clause(head=instance_of(cls, T),
                             body=require(cls))
@@ -465,6 +546,17 @@ class System:
                     super_classes = self.super_classes.get(cls, [])
                     super_class_constraints = [instance_of(s, T) for s in super_classes]
                     self.prolog.add_clause(Clause(head=clause_head, body=[r.body, *super_class_constraints]))
+
+        # Imports
+        if self.include_prelude and self.hs_file_path.stem != 'Prelude':
+            prolog_file_path = (self.base_dir / 'Prelude.pl').as_posix()
+            term = Term(value={'functor': 'use_module', 'args': [
+                Term(value=prolog_file_path, kind=Kind.String)
+            ]}, kind=Kind.Struct)
+            self.prolog.add_import(term)
+            self.prolog.set_modules([prolog_file_path, *self.imports])
+        else:
+            self.prolog.set_modules(self.imports)
 
         for rule in self.rules:
             if rule.meta.head.name == 'module':
@@ -535,10 +627,10 @@ class System:
                         raise NotImplementedError()
 
     def get_context(self, node_ast) -> list[tuple[str, str]]:
-        def get_assertion(assertion):
-            if assertion['tag'] == 'ParenA':
-               assertion = assertion['contents'][1]
-            type_app = assertion['contents'][1]
+        def get_assertion(assertion_):
+            if assertion_['tag'] == 'ParenA':
+                assertion_ = assertion_['contents'][1]
+            type_app = assertion_['contents'][1]
             assert (type_app['tag'] == 'TyApp')
             type_con = type_app['contents'][1]
             type_var = type_app['contents'][2]
@@ -547,7 +639,8 @@ class System:
 
             class_name: str = self.get_name(type_con['contents'][1], True)
             var_name = type_var['contents'][1]['contents'][1]
-            return (class_name, var_name)
+            return class_name, var_name
+
         match node_ast:
             case {'tag': 'CxSingle', 'contents': [_, assertion]}:
                 return [get_assertion(assertion)]
@@ -577,37 +670,48 @@ class System:
 
     def check_node(self, node, term: Term, head: Head, toplevel: bool = False):
         match node:
-            case {'tag': 'Module', 'contents': [ann, _, _, imports, decls]}:
+            case {'tag': 'LanguagePragma', 'contents': [ann, pragmas]}:
+                for pragma in pragmas:
+                    pragma_name = pragma['contents'][1]
+                    match pragma_name:
+                        case 'NoImplicitPrelude':
+                            self.include_prelude = False
+                        case _:
+                            raise NotImplementedError()
+
+            case {'tag': 'Module', 'contents': [ann, _, pragmas, imports, decls]}:
+                for pragma in pragmas:
+                    self.check_node(pragma, term, head, toplevel=True)
                 for im in imports:
                     module_name: str = im['importModule'][1]
-                    prolog_file = '/'.join(module_name.split('.')) + '.pl'
-                    prolog_file_path = (self.hs_file_path.parent / prolog_file).as_posix()
+                    prolog_file_ = '/'.join(module_name.split('.')) + '.pl'
+                    prolog_file_path = (self.base_dir / prolog_file_).as_posix()
                     term = Term(value={'functor': 'use_module', 'args': [
                         Term(value=prolog_file_path, kind=Kind.String)
                     ]}, kind=Kind.Struct)
+                    self.imports.append(prolog_file_path)
                     self.add_ambient_rule(term, head)
 
                 for decl in decls:
                     self.check_node(decl, term, head, toplevel=True)
 
             case {'tag': 'InstDecl', 'contents': [ann, _, instRule, instDecl]}:
-                def get_instance_head(ast) -> tuple[str, dict | None]:
-                    match ast:
+                def get_instance_head(ast_) -> tuple[str, dict | None]:
+                    match ast_:
                         case {'tag': 'IHCon', 'contents': [ih_ann, qname]}:
-                            class_name = self.get_name(qname, True)
-                            return (class_name, None)
+                            class_name_ = self.get_name(qname, True)
+                            return class_name_, None
                         case {'tag': 'IHInfix', 'contents': [ih_ann, ih_type, qname]}:
                             raise NotImplementedError()
                         case {'tag': 'IHParen', 'contents': [ih_ann, ih_head]}:
                             return get_instance_head(ih_head)
                         case {'tag': 'IHApp', 'contents': [ih_ann, ih_head, ih_type]}:
-                            return (get_instance_head(ih_head)[0], ih_type)
+                            return get_instance_head(ih_head)[0], ih_type
 
                 if instRule['tag'] == 'IRule':
-                    [_, _, context, insHead] = instRule['contents']
-                    class_name, type_ast = get_instance_head(insHead)
+                    [_, _, context, ins_head] = instRule['contents']
+                    class_name, type_ast = get_instance_head(ins_head)
                     self.check_node(type_ast, T, Head.instance_of(class_name), toplevel=True)
-
 
                 elif instRule['tag'] == 'IParen':
                     self.check_node({'tag': 'InstDecl', 'contents': [ann, None, instRule['contents'][1], instDecl]},
@@ -629,13 +733,13 @@ class System:
 
                     for name in names:
                         name = self.get_name(name, toplevel)
-                        name_bind = self.bind(name)
-
-                        self.add_ambient_rule(var('_' + var_name) == name_bind, Head.type_of(name))
+                        name_var = self.bind(name)
+                        self.call_graph.add_closure('module', name, T.value)
+                        self.add_ambient_rule(var('_' + var_name) == name_var, Head.type_of(name))
                         self.add_ambient_rule(
                             instance_of(class_name, var('_' + var_name), wildcard),
                             Head.type_of(name))
-                    self.check_node(type_decl, var('_'), Head.type_of('module'), toplevel)
+                    self.check_node(type_decl, wildcard, Head.type_of('module'), toplevel)
 
             case {'tag': "DataDecl", 'contents': [ann, _, _, head, con_decls, derived_classes]}:
                 [name, *vs_names] = self.get_head_name(head, [])
@@ -647,9 +751,10 @@ class System:
                     if decl['tag'] == 'ConDecl':
                         [ann, name, types] = decl['contents']
                         con_name = self.get_name(name, toplevel=True)
+                        self.call_graph.add_closure('module', con_name, T.value)
                         con_var = self.bind(con_name)
-                        self.variables.add(con_name)
                         arg_vars = self.bind_n(len(types), con_name)
+
                         for t_ast, t_var in zip(types, arg_vars):
                             self.check_node(t_ast, t_var, Head.type_of(con_name))
                         self.add_rule(T == con_var, Head.type_of(con_name), ann, watch=con_var, rule_type=RuleType.Decl)
@@ -661,9 +766,8 @@ class System:
                 match pat:
                     case {'tag': 'PVar', 'contents': [ann, name]}:
                         var_name = self.get_name(name, toplevel)
-                        self.closures.append((head.name, var_name))
                         var_pat = self.bind(var_name)
-                        self.variables.add(var_name)
+                        self.call_graph.add_closure(head.name, var_name, var_pat.value)
                         self.add_rule(T == var_pat, Head.type_of(var_name), ann, var_pat, rule_type=RuleType.Decl)
                         self.check_node(rhs, var_pat, Head.type_of(var_name))
                     case _:
@@ -672,11 +776,11 @@ class System:
             case {'tag': 'FunBind', 'contents': [ann, matches]}:
                 [ann, f_name, f_args, _, _] = matches[0]['contents']
                 fun_name = self.get_name(f_name, toplevel)
-                self.closures.append((head.name, fun_name))
-                self.variables.add(fun_name)
                 var_args = self.bind_n(len(f_args), fun_name)
                 var_rhs = self.bind(fun_name)
                 var_fun = self.bind(fun_name)
+                self.call_graph.add_closure(head.name, fun_name, var_fun.value)
+
                 self.add_rule(T == var_fun, Head.type_of(fun_name), ann, watch=var_fun, rule_type=RuleType.Decl)
                 self.add_ambient_rule(var_fun == fun_of(*var_args, var_rhs), Head.type_of(fun_name))
 
@@ -689,7 +793,6 @@ class System:
             case {'tag': 'TypeSig', 'contents': [ann, names, sig]}:
                 for name in names:
                     fun_name = self.get_name(name, toplevel)
-                    self.variables.add(fun_name)
                     fun_var = self.bind(fun_name)
                     self.add_rule(fun_var == T, Head.type_of(fun_name), name['contents'][0], watch=fun_var,
                                   rule_type=RuleType.Decl)
@@ -697,7 +800,6 @@ class System:
 
             case {'tag': 'UnGuardedRhs', 'contents': [ann, exp]}:
                 self.check_node(exp, term, head)
-                # debug(exp)
 
             # Exp types:
             case {'tag': 'Lit', 'contents': [ann, lit]}:
@@ -710,38 +812,23 @@ class System:
 
             case {'tag': 'Var', 'contents': [ann, qname]}:
                 var_name = self.get_name(qname, toplevel)
-
-                if var_name == head.name:
-                    var_term = T
-                else:
-                    var_term = var('_' + var_name)
-                    self.named_vars[head.name].append(var_term)
-                    self.add_ambient_rule(struct('type_of_' + var_name, var_term, self.fresh()), head)
-
                 new_var = self.bind(head.name)
-                self.add_ambient_rule(term == new_var, head)
-                self.add_rule(new_var == var_term,
+                self.call_graph.add_call(head.name, var_name, new_var.value)
+                self.add_rule(new_var == term,
                               head, ann,
                               watch=new_var,
                               rule_type=RuleType.Var, var_string=just(var_name))
 
             case {'tag': 'InfixApp', 'contents': [ann, exp1, op, exp2]}:
-                [op_ann, op_qname] = op['contents']
-                op_name = self.get_name(op_qname, toplevel)
-                if op_name == head.name:
-                    op_var: Term = T
-                else:
-                    op_var: Term = var('_' + op_name)
-                    self.add_ambient_rule(struct('type_of_' + op_name, op_var, self.fresh()), head)
-
-                [var1, var2, var_func, var_result] = self.bind_n(4, head.name)
-                self.add_ambient_rule(term == var_result, head)
-                self.add_rule(var_func == op_var, head, op_ann, watch=var_func, rule_type=RuleType.Var,
-                              var_string=just(op_name))
-                self.add_rule(var_func == fun_of(var1, var2, var_result), head, ann, watch=var_result,
-                              rule_type=RuleType.App)
-                self.check_node(exp1, var1, head)
-                self.check_node(exp2, var2, head)
+                self.check_node({
+                    'tag': 'App',
+                    'contents': [
+                        ann,
+                        {'tag': 'App', 'contents': [ann, op, exp1]},
+                        exp2
+                    ]
+                }
+                    , term, head)
 
             case {'tag': 'App', 'contents': [ann, exp1, exp2]}:
                 [var1, var2, var_result] = self.bind_n(3, head.name)
@@ -785,7 +872,6 @@ class System:
             case {'tag': 'List', 'contents': [ann, exps]}:
                 elem_var = self.bind(head.name)
                 self.add_rule(term == list_of(elem_var), head, ann, watch=term, rule_type=RuleType.Lit)
-
                 for exp in exps:
                     self.check_node(exp, elem_var, head)
 
@@ -839,7 +925,6 @@ class System:
                             type_name = t[0].lower() + t[1:]
                             self.add_rule(term == adt(atom(type_name), []), head, ann, watch=term,
                                           rule_type=RuleType.Type)
-                            # raise NotImplementedError
                 else:
                     raise NotImplementedError
 
@@ -875,10 +960,12 @@ class System:
             # Patterns
             case {'tag': 'PVar', 'contents': [ann, name]}:
                 p_name = self.get_name(name, toplevel)
-                p_var = var('_' + p_name)
-                self.named_vars[head.name].append(p_var)
-                self.add_ambient_rule(p_var == term, head)
-                self.variables.add(p_name)
+                new_var = self.bind(head.name)
+                self.add_ambient_rule(new_var == term, head)
+                self.call_graph.add_closure(head.name, p_name, new_var.value)
+                self.call_graph.add_call(head.name, p_name, new_var.value)
+                inner_var = self.bind(p_name)
+                self.add_ambient_rule(T == inner_var, Head.type_of(p_name))
 
             case {'tag': 'PList', 'contents': [ann, pats]}:
                 elem = self.bind(head.name)
@@ -893,31 +980,25 @@ class System:
                 self.check_node(p, term, head)
 
             case {'tag': 'PApp', 'contents': [ann, pname, p_args]}:
-                constructor = self.get_name(pname, toplevel)
+                fun_name = self.get_name(pname, toplevel)
+                fun_var = self.bind(head.name)
                 arg_vars = self.bind_n(len(p_args), head.name)
-                self.add_rule(var('_' + constructor) == fun_of(*arg_vars, term), head, ann, watch=term,
+                self.add_rule(fun_var == fun_of(*arg_vars, term), head, ann, watch=term,
                               rule_type=RuleType.App)
-                free_var = self.fresh()
-                self.add_ambient_rule(struct('type_of_' + constructor, var('_' + constructor), free_var), head)
+                self.call_graph.add_call(head.name, fun_name, fun_var.value)
                 for arg_ast, arg_var in zip(p_args, arg_vars):
                     self.check_node(arg_ast, arg_var, head)
 
             case {'tag': 'PInfixApp', 'contents': [ann, p1, op, p2]}:
-                op_name = self.get_name(op, toplevel)
-                self.variables.add(op_name)
-                if op_name == head.name:
-                    op_var = T
-                else:
-                    op_var = var('_' + op_name)
-                    self.add_ambient_rule(struct('type_of_' + op_name, op_var, self.fresh()), head)
+                self.check_node({
+                    'tag': 'PApp',
+                    'contents': [ann, op, [p1, p2]]
+                }, term, head)
 
-                [var1, var2, var_func, var_result] = self.bind_n(4, head.name)
-                self.add_rule(var_func == op_var, head, op['contents'][0], watch=var_func, rule_type=RuleType.Var,
-                              var_string=just(op_name))
-                self.add_rule(var_func == fun_of(var1, var2, var_result), head, ann, watch=var_result,
-                              rule_type=RuleType.App)
-                self.check_node(p1, var1, head)
-                self.check_node(p2, var2, head)
+            case {'tag': 'QVarOp', 'contents': [ann, name]}:
+                v = self.bind(head.name)
+                self.call_graph.add_call(head.name, self.get_name(name, toplevel), v.value)
+                self.add_rule(v == term, head, ann, watch=term, rule_type=RuleType.Var)
 
             case {'tag': 'Special', 'contents': [ann, special_con]}:
                 match special_con['tag']:
@@ -950,30 +1031,42 @@ if __name__ == "__main__":
     asts = [c['ast'] for c in parsed_data['contents']]
     files = [c['file'] for c in parsed_data['contents']]
 
-    # for ast, file in zip(asts, files):
-    #     if file == to_check_file:
-    #         continue
-    #     else:
-    #         prolog_file = file[:-3] + '.pl'
-    #         with Prolog(interface=PlInterface.File, file=base_dir / prolog_file, base_dir=base_dir) as prolog:
-    #             system = System(
-    #                 ast=ast,
-    #                 hs_file=base_dir / file,
-    #                 prolog_instance=prolog
-    #             )
-    #             system.marshal()
-    #             system.generate_intermediate({r.rid for r in system.rules})
-
+    queries = []
     for ast, file in zip(asts, files):
         if file == to_check_file:
+            continue
+        else:
             prolog_file = file[:-3] + '.pl'
-            with Prolog(interface=PlInterface.File, file=base_dir / prolog_file, base_dir=base_dir) as prolog:
+            with Prolog(interface=PlInterface.File, file=base_dir / prolog_file) as prolog:
                 system = System(
+                    base_dir=base_dir,
                     ast=ast,
                     hs_file=base_dir / file,
                     prolog_instance=prolog
                 )
                 system.marshal()
                 system.generate_intermediate({r.rid for r in system.rules})
-                # diagnoses = system.type_check()
-                # print('[' + ','.join([d.json() for d in diagnoses]) + ']')
+                queries.extend(system.prolog.queries)
+
+    for ast, file in zip(asts, files):
+        if file == to_check_file:
+            prolog_file = file[:-3] + '.pl'
+            with Prolog(interface=PlInterface.File, file=base_dir / prolog_file) as prolog:
+                system = System(
+                    base_dir=base_dir,
+                    ast=ast,
+                    hs_file=base_dir / file,
+                    prolog_instance=prolog
+                )
+                system.marshal()
+                system.generate_intermediate({r.rid for r in system.rules})
+                system.call_graph.show()
+                print("Queries:")
+                print(',\n'.join([str(q) for q in system.prolog.queries]))
+                print('\n\n')
+                system.prolog.queries.extend(queries)
+
+                #
+
+                diagnoses = system.type_check()
+                print('[' + ','.join([d.json() for d in diagnoses]) + ']')

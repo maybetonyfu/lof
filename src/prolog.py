@@ -110,14 +110,14 @@ class PlInterface(Enum):
 
 
 class Prolog(ContextDecorator):
-    def __init__(self, interface: PlInterface, file: Path, base_dir: Path):
+    def __init__(self, interface: PlInterface, file: Path):
         self.file: Path = file
         self.builtin: Path = Path(__file__).parent.parent / 'prolog' / 'builtin.pl'
-        self.prelude: Path = base_dir / 'Prelude.pl'
         self.clauses: list[Clause] = []
         self.queries: list[Term] = []
         self.imports: list[Term] = []
         self.predicates: list[tuple[str, int]] = []
+        self.modules: list[str] = []
         self.interface: PlInterface = interface
 
     def __enter__(self):
@@ -166,6 +166,9 @@ class Prolog(ContextDecorator):
     def add_queries(self, qs: list[Term]):
         self.queries += qs
 
+    def set_modules(self, modules: list[str]):
+        self.modules = modules
+
     def run(self):
         if self.interface == PlInterface.File:
             return self.run_file()
@@ -189,13 +192,13 @@ class Prolog(ContextDecorator):
             f.write(self.generate_script())
 
     def run_file(self) -> bool | list[bool | dict]:
-        is_prelude = self.file.stem == 'Prelude'
+        # is_prelude = self.file.stem == 'Prelude'
         abolishes = self.generate_abolishes()
-
+        consult_modules = [f"consult('{m}')" for m in self.modules]
         consult_query = ','.join(['style_check(-singleton)'] +
                                  abolishes +
                                  [f"consult('{self.builtin.as_posix()}')"] +
-                                 ([] if is_prelude else [f"consult('{self.prelude.as_posix()}')"]) +
+                                 consult_modules +
                                  [f"consult('{self.file.as_posix()}')"] +
                                  [q.__str__() for q in self.queries])
         return self.prolog_thread.query(consult_query)

@@ -61,6 +61,12 @@ class CallGraph:
         self.graph: dict[str, set[tuple[str, str]]] = defaultdict(set)
         self.closures: dict[str, set[tuple[str, str]]] = defaultdict(set)
 
+    def is_top_level(self, var: str):
+        for parent, children in self.closures.items():
+            if var in [v[0] for v in children] and parent == 'module':
+                return True
+        return False
+
     def add_call(self, caller: str, callee: str, alias: str):
         self.graph[caller].add((callee, alias))
 
@@ -262,26 +268,6 @@ class Rule(BaseModel):
         return self.meta.type == RuleType.Ambient or self.meta.type == RuleType.Decl
 
 
-class TypeSig(BaseModel):
-    var: str
-    type: str
-
-
-class FixType(Enum):
-    Type = 'Type'
-    Term = 'Term'
-
-
-# class Fix(BaseModel):
-#     fix_type: FixType
-#     original_text: str
-#     inferred_type: str
-#     is_mismatch_decl: bool
-#     mismatch_decl: str | None
-#     mismatch_usage_type: str | None
-#     mismatch_usage_loc: Loc | None
-
-
 class Decl(BaseModel):
     name: str
     type: str | None
@@ -463,7 +449,8 @@ class System:
                 locs = [r.meta.loc for r in mcs_rules]
                 cause = Cause(
                     decls=list(
-                        map(lambda decl: Decl(name=decl.name, loc=decl.loc, type=str(types[decl.name])), all_decls)),
+                        map(lambda decl: Decl(name=decode(decl.name), loc=decl.loc, type=str(types[decl.name])),
+                            all_decls)),
                     suggestions=suggestions,
                     locs=locs,
                 )
@@ -504,33 +491,27 @@ class System:
             frees = Term.array(*self.free_vars.get(h, []))
             self.prolog.add_query(struct('type_of_' + h, var_term, frees))
 
-        function_call_stacks = []
-        for caller, callees in self.call_graph.graph.items():
-            var_term = var('_' + caller)
-            callees_with_fresh_var = [(name, alias, self.fresh()) for (name, alias) in callees]
-            for (callee, alias, fresh_var) in callees_with_fresh_var:
-                free_vars = [fresh_var if v.value == alias else wildcard for v in self.free_vars.get(caller, [])]
-                callee_free_vars = Term.array(
-                    *(self.free_vars[callee])) if self.call_graph.is_ancestor_of(caller, callee) else wildcard
-                function_call_stacks.append(type_of(caller, var_term, Term.array(*free_vars)))
-                function_call_stacks.append(type_of(callee, fresh_var, callee_free_vars))
-        self.prolog.add_queries(function_call_stacks)
+        seen = set()
 
-        # all_usages = self.call_graph.all_usages()
-        # for caller, callee, alias in all_usages:
-        #     usage_scope = caller
-        #     declarer = self.call_graph.get_declarer(callee)
-        #     if declarer != 'module' and self.call_graph.is_ancestor_of(declarer, usage_scope):
-        #         declare_alias = [i[1] for i in self.call_graph.closures[declarer] if i[0] == callee][0]
-        #         print(f"Clouser of var {callee}, declared in {declarer}, used in {usage_scope}")
-        #         fresh = var("ClosureFreeVar")
-        #
-        #         declare_scope = [key for key, values in self.free_vars.items() if declare_alias in [v.value for v in values]][0]
-        #         print("Decalared in: ", declare_scope)
-        #         delcare_free_vars = [fresh if v.value == declare_alias else wildcard for v in self.free_vars[declare_scope]]
-        #         usage_free_vars = [fresh if v.value == alias else wildcard for v in self.free_vars[usage_scope]]
-        #         self.prolog.add_query(type_of(declare_scope, var('_' + declare_scope), Term.array(*delcare_free_vars)))
-        #         self.prolog.add_query(type_of(usage_scope, var('_' + usage_scope), Term.array(*usage_free_vars)))
+        def traverse_call_stack(caller_: str, callees: set[tuple[str, str]], self_var: Term):
+            if caller_ in seen:
+                return
+            else:
+                seen.add(caller_)
+                for callee, alias in callees:
+                    caller_free_vars = [v if v.value == alias else wildcard for v in self.free_vars[caller_]]
+                    new_var = [v for v in self.free_vars[caller_] if v.value == alias][0]
+                    self.prolog.add_query(type_of(caller_, self_var, Term.array(*caller_free_vars)))
+                    if callee in self.call_graph.graph.keys():
+                        traverse_call_stack(callee, self.call_graph.graph[callee], new_var)
+                    else:
+                        self.prolog.add_query(
+                            type_of(callee, new_var, wildcard)
+                        )
+
+        for caller in self.call_graph.graph:
+            if self.call_graph.is_top_level(caller):
+                traverse_call_stack(caller, self.call_graph.graph[caller], var('_' + caller))
 
         # Add rules for instance_of_XYZ(A, B) ...
         for cls in self.classes:
@@ -1060,10 +1041,6 @@ if __name__ == "__main__":
                 )
                 system.marshal()
                 system.generate_intermediate({r.rid for r in system.rules})
-                system.call_graph.show()
-                print("Queries:")
-                print(',\n'.join([str(q) for q in system.prolog.queries]))
-                print('\n\n')
                 system.prolog.queries.extend(queries)
 
                 #

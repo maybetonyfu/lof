@@ -6,7 +6,7 @@ from fastapi import FastAPI, Body
 from fastapi.responses import HTMLResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pathlib import Path
-from src.haskell import System, Error, Rule, TypeSig, Diagnosis
+from src.haskell import System, Error, Rule, Diagnosis
 from pydantic import BaseModel
 from src.prolog import Prolog, PlInterface
 import shutil
@@ -30,7 +30,6 @@ class TypeCheckResult(BaseModel):
 
 @app.get("/api/type_check/{file_path:path}")
 async def typecheck(file_path: str, user_id: str) -> list[Diagnosis]:
-
     project_dir = Path(__file__).parent.parent
     base_dir = project_dir / "tmp" / user_id
     parser_bin = str(project_dir / "bin" / "haskell-parser.exe") if platform() == 'Windows' else str(
@@ -40,42 +39,38 @@ async def typecheck(file_path: str, user_id: str) -> list[Diagnosis]:
     parsed_data = ujson.loads(result.stdout)
     asts = [c['ast'] for c in parsed_data['contents']]
     files = [Path(c['file']).as_posix() for c in parsed_data['contents']]
-    print(files)
-    print('file:  ', file_path)
+    queries = []
     for ast, file in zip(asts, files):
         if file == file_path:
             continue
         else:
             prolog_file = file[:-3] + '.pl'
-            with Prolog(interface=PlInterface.File, file=base_dir / prolog_file, base_dir=base_dir) as prolog:
+            with Prolog(interface=PlInterface.File, file=base_dir / prolog_file) as prolog:
                 system = System(
                     ast=ast,
                     hs_file=base_dir / file,
-                    prolog_instance=prolog
+                    prolog_instance=prolog,
+                    base_dir=base_dir
                 )
                 system.marshal()
+                queries.extend(system.prolog.queries)
                 system.generate_intermediate({r.rid for r in system.rules})
 
     for ast, file in zip(asts, files):
         if file == file_path:
             prolog_file = file[:-3] + '.pl'
-            with Prolog(interface=PlInterface.File, file=base_dir / prolog_file, base_dir=base_dir) as prolog:
+            with Prolog(interface=PlInterface.File, file=base_dir / prolog_file) as prolog:
                 system = System(
                     ast=ast,
                     hs_file=base_dir / file,
-                    prolog_instance=prolog
+                    prolog_instance=prolog,
+                    base_dir=base_dir
                 )
                 system.marshal()
+                system.prolog.queries.extend(queries)
                 diagnoses = system.type_check()
                 # print(diagnoses)
                 return diagnoses
-
-    # prolog_file = (Path(__file__).parent.parent / "tmp" / user_id / 'program.pl').as_posix()
-    # with Prolog(interface=PlInterface.Console, file=prolog_file) as prolog:
-    #     base_dir = Path(__file__).parent.parent / "tmp" / user_id
-    #     system = System(str(base_dir), prolog)
-    #     errors = system.type_check()
-    #     return errors
 
 
 @app.get('/api/file/{file_path:path}')

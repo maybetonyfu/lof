@@ -1,5 +1,3 @@
-from typing import Iterator
-
 from swiplserver import *
 from contextlib import ContextDecorator
 from pathlib import Path
@@ -223,7 +221,7 @@ class Prolog(ContextDecorator):
 
 
 if __name__ == "__main__":
-    with Prolog(interface=PlInterface.File, file=Path('./test.pl'), base_dir=Path(".")) as prolog:
+    with Prolog(interface=PlInterface.File, file=Path('./test.pl')) as prolog:
         r = prolog.run_raw_query(f'''member(a, X),member(b, X), X=[a]''')
         # r2 = prolog.run_raw_query(f'''member(b, X)''')
         # r = prolog.run()

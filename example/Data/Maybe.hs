@@ -5,4 +5,4 @@ isJust :: Maybe a -> Bool
 isJust = undefined
 
 isNothing :: Maybe a -> Bool
-isNoting = undefined
+isNothing = undefined

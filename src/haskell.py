@@ -152,6 +152,11 @@ class Type:
             case {'functor': 'adt', 'args': [{'functor': '[|]', 'args': ['list', x]}]}:
                 x_type = self.from_json(x).strip()
                 return f'[{x_type}]'
+
+            case {'functor': 'adt', 'args': [{'functor': '[|]', 'args': ['tuple', x]}]}:
+                args = prolog_list_to_list(x)
+                return '(' + ', '.join([self.from_json(arg) for arg in args]) + ')'
+
             case {'functor': 'adt', 'args': [{'functor': '[|]', 'args': ['function', x]}]}:
                 args = prolog_list_to_list(x)
 
@@ -221,6 +226,15 @@ def fun_of(*terms: Term):
             return adt(atom('function'), [terms[0], fun_of(*terms[1:])])
 
 
+def tuple_of(*terms: Term):
+    match len(terms):
+        case 0:
+            raise ValueError("tuple_of needs at least one argument")
+        case 1:
+            return terms[0]
+        case _:
+            return adt(atom('tuple'), [terms[0], tuple_of(*terms[1:])])
+
 class RuleType(Enum):
     Decl = 'Decl'
     Var = 'Var'
@@ -229,6 +243,7 @@ class RuleType(Enum):
     Type = 'Type'
     Ambient = 'Ambient'
     Class = "Class"
+    Tuple = "Tuple"
 
 
 class HeadType(Enum):
@@ -800,6 +815,12 @@ class System:
                               watch=new_var,
                               rule_type=RuleType.Var, var_string=just(var_name))
 
+            case {'tag': 'Tuple', 'contents': [ann, _, exps]}:
+                node_vars = self.bind_n(len(exps), head.name)
+                self.add_rule(term == tuple_of(*node_vars), head, ann, watch=term, rule_type=RuleType.Tuple)
+                for exp, node_var in zip(exps, node_vars):
+                    self.check_node(exp, node_var, head)
+
             case {'tag': 'InfixApp', 'contents': [ann, exp1, op, exp2]}:
                 self.check_node({
                     'tag': 'App',
@@ -914,6 +935,12 @@ class System:
                 self.check_node(t1, var1, head)
                 self.check_node(t2, var2, head)
                 self.add_rule(term == fun_of(var1, var2), head, ann, watch=term, rule_type=RuleType.Type)
+
+            case {'tag': 'TyTuple', 'contents': [ann, _, tys]}:
+                args = self.bind_n(len(tys), head.name)
+                self.add_rule(term == tuple_of(*args), head, ann, watch=term, rule_type=RuleType.Type)
+                for node_ast, node_term in zip(tys, args):
+                    self.check_node(node_ast, node_term, head)
 
             case {'tag': 'TyList', 'contents': [ann, tnode]}:
                 t_var = self.bind(head.name)

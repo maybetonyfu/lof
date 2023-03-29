@@ -758,7 +758,7 @@ class System:
                     else:
                         raise NotImplementedError()
 
-            case {'tag': 'PatBind', 'contents': [ann, pat, rhs, _]}:
+            case {'tag': 'PatBind', 'contents': [ann, pat, rhs, wheres]}:
                 match pat:
                     case {'tag': 'PVar', 'contents': [ann, name]}:
                         var_name = self.get_name(name, toplevel)
@@ -766,6 +766,9 @@ class System:
                         self.call_graph.add_closure(head.name, var_name, var_pat.value)
                         self.add_rule(T == var_pat, Head.type_of(var_name), ann, var_pat, rule_type=RuleType.Decl)
                         self.check_node(rhs, var_pat, Head.type_of(var_name))
+
+                        if wheres is not None:
+                            self.check_node(wheres, self.fresh(), Head.type_of(var_name))
                     case _:
                         raise NotImplementedError(f"PatBind with {pat.get('tag')} is not supported")
 
@@ -785,6 +788,8 @@ class System:
                     for arg, var_arg in zip(args, var_args):
                         self.check_node(arg, var_arg, head=Head.type_of(fun_name))
                     self.check_node(rhs, var_rhs, head=Head.type_of(fun_name))
+                    if wheres is not None:
+                        self.check_node(wheres, self.fresh(), Head.type_of(fun_name))
 
             case {'tag': 'TypeSig', 'contents': [ann, names, sig]}:
                 for name in names:
@@ -793,6 +798,10 @@ class System:
                     self.add_rule(fun_var == T, Head.type_of(fun_name), name['contents'][0], watch=fun_var,
                                   rule_type=RuleType.Decl)
                     self.check_node(sig, fun_var, head=Head.type_of(fun_name))
+
+            case {'tag': 'BDecls', 'contents': [ann, decls]}:
+                for decl in decls:
+                    self.check_node(decl, atom('false'), head)
 
             case {'tag': 'UnGuardedRhs', 'contents': [ann, exp]}:
                 self.check_node(exp, term, head)

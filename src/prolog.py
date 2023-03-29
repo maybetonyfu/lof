@@ -190,11 +190,8 @@ class Prolog(ContextDecorator):
             f.write(self.generate_script())
 
     def run_file(self) -> bool | list[bool | dict]:
-        # is_prelude = self.file.stem == 'Prelude'
-        abolishes = self.generate_abolishes()
         consult_modules = [f"consult('{m}')" for m in self.modules]
         consult_query = ','.join(['style_check(-singleton)'] +
-                                 abolishes +
                                  [f"consult('{self.builtin.as_posix()}')"] +
                                  consult_modules +
                                  [f"consult('{self.file.as_posix()}')"] +

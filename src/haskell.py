@@ -61,9 +61,9 @@ class CallGraph:
         self.graph: dict[str, set[tuple[str, str]]] = defaultdict(set)
         self.closures: dict[str, set[tuple[str, str]]] = defaultdict(set)
 
-    def is_top_level(self, var: str):
+    def is_top_level(self, var_: str):
         for parent, children in self.closures.items():
-            if var in [v[0] for v in children] and parent == 'module':
+            if var_ in [v[0] for v in children] and parent == 'module':
                 return True
         return False
 
@@ -235,6 +235,7 @@ def tuple_of(*terms: Term):
         case _:
             return adt(atom('tuple'), [terms[0], tuple_of(*terms[1:])])
 
+
 class RuleType(Enum):
     Decl = 'Decl'
     Var = 'Var'
@@ -244,6 +245,7 @@ class RuleType(Enum):
     Ambient = 'Ambient'
     Class = "Class"
     Tuple = "Tuple"
+    Pattern = "Pattern"
 
 
 class HeadType(Enum):
@@ -346,14 +348,14 @@ class System:
     def fresh(self) -> Term:
         vid = self.variable_counter
         self.variable_counter += 1
-        internal_name = f'FreshU{vid}'
+        internal_name = f'_Fresh{vid}'
         term = var(internal_name)
         return term
 
     def bind(self, h: str) -> Term:
         vid = self.variable_counter
         self.variable_counter += 1
-        internal_name = f'FreshB{vid}'
+        internal_name = f'Fresh{vid}'
         term = var(internal_name)
         if old := self.free_vars.get(h, False):
             self.free_vars[h] = old + [term]
@@ -742,6 +744,24 @@ class System:
                 name = name[0].lower() + name[1:]
                 vs = [var('_' + v) for v in vs_names]
                 adt_var = adt(atom(name), vs)
+
+                def get_first_instance_constant(ast):
+                    match ast:
+                        case {'tag': 'IRule', 'contents': [_, _, _, istHead]}:
+                            assert istHead['tag'] == 'IHCon'
+                            return istHead['contents'][1]
+                        case {'tag': 'IParen', 'contents': [_, ir]}:
+                            return get_first_instance_constant(ir)
+
+                for derivings in derived_classes:
+                    [_, _, istRules] = derivings
+                    for istRule in istRules:
+                        qname = get_first_instance_constant(istRule)
+                        class_name = self.get_name(qname, toplevel=True)
+                        self.add_ambient_rule(
+                            T == adt_var,
+                            Head.instance_of(class_name))
+
                 for con_decl in con_decls:
                     decl = con_decl[3]
                     if decl['tag'] == 'ConDecl':
@@ -805,6 +825,27 @@ class System:
 
             case {'tag': 'UnGuardedRhs', 'contents': [ann, exp]}:
                 self.check_node(exp, term, head)
+
+            case {'tag': 'GuardedRhss', 'contents': [ann, rhss]}:
+                for rhs in rhss:
+                    self.check_node({
+                        'tag': 'GuardedRhs',
+                        'contents': rhs
+                    }, term, head)
+
+            case {'tag': 'GuardedRhs', 'contents': [ann, stmts, exp]}:
+
+                self.check_node(exp, term, head)
+                for stmt in stmts:
+                    match stmt:
+                        case {'tag': 'Qualifier', 'contents': [ann, exp]}:
+                            pattern_var = self.bind(head.name)
+                            self.check_node(exp, pattern_var, head)
+                            self.add_rule(pattern_var == t_bool, head, ann, watch=pattern_var,
+                                          rule_type=RuleType.Pattern)
+
+                        case {'tag': 'Generator', 'contents': [ann, pat, exp]}:
+                            raise NotImplementedError("Pattern guards are not supported")
 
             # Exp types:
             case {'tag': 'Lit', 'contents': [ann, lit]}:
@@ -1031,8 +1072,9 @@ class System:
                         raise NotImplementedError("ExprHole")
 
             case _:
-                print("Unknown node type: ", node.get('type'))
                 print(ujson.dumps(node))
+
+                print("Unknown node type: ", node.get('type'))
                 raise NotImplementedError
 
 
@@ -1078,8 +1120,6 @@ if __name__ == "__main__":
                 system.marshal()
                 system.generate_intermediate({r.rid for r in system.rules})
                 system.prolog.queries.extend(queries)
-
-                #
 
                 diagnoses = system.type_check()
                 print('[' + ','.join([d.json() for d in diagnoses]) + ']')

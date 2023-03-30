@@ -59,6 +59,7 @@ def require(cls: str) -> [Term]:
 class CallGraph:
     BOUND = 'bound'
     FREE = 'free'
+
     def __init__(self):
         self.graph: dict[str, set[tuple[str, str]]] = defaultdict(set)
         self.closures: dict[str, set[tuple[str, str]]] = defaultdict(set)
@@ -81,7 +82,6 @@ class CallGraph:
                 if var_ == child:
                     return v_type
         return self.FREE
-
 
     # def has_usage(self, caller: str, callee: str) -> bool:
     #     return callee in {name for name, alias in self.graph[caller]}
@@ -536,7 +536,8 @@ class System:
             else:
                 seen.add(caller_)
                 for callee, alias in callees:
-                    v_var =  self.fresh() if self.call_graph.var_type(callee) == CallGraph.FREE else var('_F_' + callee + '_' + original_caller)
+                    v_var = self.fresh() if self.call_graph.var_type(callee) == CallGraph.FREE else var(
+                        '_F_' + callee + '_' + original_caller)
                     caller_free_vars = [v_var if v.value == alias else v for v in self.free_vars[caller_]]
                     self.prolog.add_query(type_of(caller_, self_var, Term.array(*caller_free_vars)))
                     if callee in self.call_graph.graph.keys():
@@ -921,6 +922,32 @@ class System:
                 self.check_node(exp1, var1, head)
                 self.check_node(exp2, var2, head)
 
+            case {'tag': 'RightSection', 'contents': [ann, op, right]}:
+                [v_op, v_left, v_right, v_result] = self.bind_n(4, head.name)
+                self.add_ambient_rule(
+                    v_op == fun_of(v_left, v_right, v_result),
+                    head
+                )
+                self.add_rule(
+                    term == fun_of(v_left, v_result),
+                    head, ann, watch=term, rule_type=RuleType.App
+                )
+                self.check_node(op, v_op, head)
+                self.check_node(right, v_right, head)
+
+            case {'tag': 'LeftSection', 'contents': [ann, left, op]}:
+                [v_op, v_left, v_right, v_result] = self.bind_n(4, head.name)
+                self.add_ambient_rule(
+                    v_op == fun_of(v_left, v_right, v_result),
+                    head
+                )
+                self.add_rule(
+                    term == fun_of(v_right, v_result),
+                    head, ann, watch=term, rule_type=RuleType.App
+                )
+                self.check_node(op, v_op, head)
+                self.check_node(left, v_left, head)
+
             case {'tag': 'Lambda', 'contents': [ann, pats, exp]}:
                 fun_name = self.lambda_name()
                 var_args = self.bind_n(len(pats), fun_name)
@@ -928,7 +955,8 @@ class System:
                 self.check_node(exp, var_rhs, Head.type_of(fun_name))
                 for pat, pat_var in zip(pats, var_args):
                     self.check_node(pat, pat_var, Head.type_of(fun_name))
-                self.add_rule(T == fun_of(*var_args, var_rhs), Head.type_of(fun_name), ann, watch=term, rule_type=RuleType.Decl)
+                self.add_rule(T == fun_of(*var_args, var_rhs), Head.type_of(fun_name), ann, watch=term,
+                              rule_type=RuleType.Decl)
                 self.call_graph.add_closure(head.name, fun_name, CallGraph.FREE)
                 lambda_var = self.bind(head.name)
                 self.call_graph.add_call(head.name, fun_name, lambda_var.value)
@@ -986,10 +1014,19 @@ class System:
                 self.add_rule(term == t_float, head, ann, watch=term, rule_type=RuleType.Lit)
 
             # Types
-            case {'tag': 'TyCon', 'contents': [_, qname]}:
-                type_literal: str = qname['contents'][1]['contents'][1]
-                type_name: str = type_literal[0].lower() + type_literal[1:]
-                self.add_ambient_rule(term == atom(type_name), head)
+            case {'tag': 'TyCon', 'contents': [ann, qname]}:
+                if qname['tag'] == 'Special':
+                    match qname['contents'][1]:
+                        case {'tag': 'UnitCon', 'contents': _}:
+                            self.add_rule(term == t_unit, head, ann, watch=term, rule_type=RuleType.Type)
+                        case {'tag': 'ListCon', 'contents': _}:
+                            self.add_rule(term == atom('list'), head, ann, watch=term, rule_type=RuleType.Type)
+                        case _:
+                            raise Exception("Unknown special type: " + qname['contents'][1])
+                else:
+                    type_literal: str = qname['contents'][1]['contents'][1]
+                    type_name: str = type_literal[0].lower() + type_literal[1:]
+                    self.add_ambient_rule(term == atom(type_name), head)
 
             case {'tag': 'TyApp', 'contents': [ann, t1, t2]}:
                 v1: Term
@@ -1132,21 +1169,21 @@ if __name__ == "__main__":
     files = [c['file'] for c in parsed_data['contents']]
 
     queries = []
-    for ast, file in zip(asts, files):
-        if file == to_check_file:
-            continue
-        else:
-            prolog_file = file[:-3] + '.pl'
-            with Prolog(interface=PlInterface.File, file=base_dir / prolog_file) as prolog:
-                system = System(
-                    base_dir=base_dir,
-                    ast=ast,
-                    hs_file=base_dir / file,
-                    prolog_instance=prolog
-                )
-                system.marshal()
-                system.generate_intermediate({r.rid for r in system.rules})
-                queries.extend(system.prolog.queries)
+    # for ast, file in zip(asts, files):
+    #     if file == to_check_file:
+    #         continue
+    #     else:
+    #         prolog_file = file[:-3] + '.pl'
+    #         with Prolog(interface=PlInterface.File, file=base_dir / prolog_file) as prolog:
+    #             system = System(
+    #                 base_dir=base_dir,
+    #                 ast=ast,
+    #                 hs_file=base_dir / file,
+    #                 prolog_instance=prolog
+    #             )
+    #             system.marshal()
+    #             system.generate_intermediate({r.rid for r in system.rules})
+    #             queries.extend(system.prolog.queries)
 
     for ast, file in zip(asts, files):
         if file == to_check_file:

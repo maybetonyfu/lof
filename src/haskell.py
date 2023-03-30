@@ -72,8 +72,8 @@ class CallGraph:
     def add_call(self, caller: str, callee: str, alias: str):
         self.graph[caller].add((callee, alias))
 
-    def add_closure(self, parent: str, child: str, alias: str):
-        self.closures[parent].add((child, alias))
+    def add_closure(self, parent: str, child: str, closure_type: str):
+        self.closures[parent].add((child, closure_type))
 
     def var_type(self, var_: str):
         for children in self.closures.values():
@@ -345,6 +345,7 @@ class System:
         self.imports = []
         self.file_content: str | None = None
         self.variable_counter: int = 0
+        self.lambda_counter: int = 0
         self.free_vars: dict[str, list[Term]] = defaultdict(list)  # (head, Intermediate variables).
         self.rules: list[Rule] = []
         self.tc_errors: list[Error] = []
@@ -378,6 +379,11 @@ class System:
         for i in range(n):
             fresh_vars.append(self.bind(h))
         return fresh_vars
+
+    def lambda_name(self) -> str:
+        name = f'lambda{self.lambda_counter}'
+        self.lambda_counter += 1
+        return name
 
     def _add_rule(self, body: Term, head: Head, ann: Maybe[dict], watch: Maybe[Term], rule_type: RuleType,
                   var_string: Maybe[str]):
@@ -914,6 +920,19 @@ class System:
                 self.add_rule(var1 == fun_of(var2, term), head, ann, watch=var_result, rule_type=RuleType.App)
                 self.check_node(exp1, var1, head)
                 self.check_node(exp2, var2, head)
+
+            case {'tag': 'Lambda', 'contents': [ann, pats, exp]}:
+                fun_name = self.lambda_name()
+                var_args = self.bind_n(len(pats), fun_name)
+                var_rhs = self.bind(fun_name)
+                self.check_node(exp, var_rhs, Head.type_of(fun_name))
+                for pat, pat_var in zip(pats, var_args):
+                    self.check_node(pat, pat_var, Head.type_of(fun_name))
+                self.add_rule(T == fun_of(*var_args, var_rhs), Head.type_of(fun_name), ann, watch=term, rule_type=RuleType.Decl)
+                self.call_graph.add_closure(head.name, fun_name, CallGraph.FREE)
+                lambda_var = self.bind(head.name)
+                self.call_graph.add_call(head.name, fun_name, lambda_var.value)
+                self.add_rule(lambda_var == term, head, ann, watch=lambda_var, rule_type=RuleType.App)
 
             case {'tag': 'Paren', 'contents': [_, exp]}:
                 self.check_node(exp, term, head)

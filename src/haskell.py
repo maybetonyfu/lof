@@ -80,6 +80,7 @@ class CallGraph:
             for child, v_type in children:
                 if var_ == child:
                     return v_type
+        return self.FREE
 
 
     # def has_usage(self, caller: str, callee: str) -> bool:
@@ -357,7 +358,7 @@ class System:
     def fresh(self) -> Term:
         vid = self.variable_counter
         self.variable_counter += 1
-        internal_name = f'_{vid}'
+        internal_name = f'_F{vid}'
         term = var(internal_name)
         return term
 
@@ -529,9 +530,8 @@ class System:
             else:
                 seen.add(caller_)
                 for callee, alias in callees:
-                    v_var =  self.fresh() if self.call_graph.var_type(callee) == CallGraph.FREE else var('_' + callee + '_' + original_caller)
-                    caller_free_vars = [v_var if v.value == alias else wildcard for v in self.free_vars[caller_]]
-                    # new_var = [v for v in self.free_vars[caller_] if v.value == alias][0]
+                    v_var =  self.fresh() if self.call_graph.var_type(callee) == CallGraph.FREE else var('_F_' + callee + '_' + original_caller)
+                    caller_free_vars = [v_var if v.value == alias else v for v in self.free_vars[caller_]]
                     self.prolog.add_query(type_of(caller_, self_var, Term.array(*caller_free_vars)))
                     if callee in self.call_graph.graph.keys():
                         traverse_call_stack(

@@ -136,7 +136,7 @@ class Prolog(ContextDecorator):
             pubs.append(f'{predicate}/2')
         pub_string = ','.join(pubs)
         header = f":- module({module_name}, [{pub_string}])."
-        imports = '\n'.join([':- ' + m.__str__() + '.' for m in self.imports])
+        imports = '\n'.join([f":- reexport('{m}')." for m in self.modules])
         clauses = '\n'.join([c.__str__() + '.' for c in self.clauses])
         return '\n'.join([header, imports, clauses])
 
@@ -193,7 +193,7 @@ class Prolog(ContextDecorator):
         consult_modules = [f"consult('{m}')" for m in self.modules]
         consult_query = ','.join(['style_check(-singleton)'] +
                                  [f"consult('{self.builtin.as_posix()}')"] +
-                                 consult_modules +
+                                 # consult_modules +
                                  [f"consult('{self.file.as_posix()}')"] +
                                  [q.__str__() for q in self.queries])
         return self.prolog_thread.query(consult_query)

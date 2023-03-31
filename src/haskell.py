@@ -1169,21 +1169,21 @@ if __name__ == "__main__":
     files = [c['file'] for c in parsed_data['contents']]
 
     queries = []
-    # for ast, file in zip(asts, files):
-    #     if file == to_check_file:
-    #         continue
-    #     else:
-    #         prolog_file = file[:-3] + '.pl'
-    #         with Prolog(interface=PlInterface.File, file=base_dir / prolog_file) as prolog:
-    #             system = System(
-    #                 base_dir=base_dir,
-    #                 ast=ast,
-    #                 hs_file=base_dir / file,
-    #                 prolog_instance=prolog
-    #             )
-    #             system.marshal()
-    #             system.generate_intermediate({r.rid for r in system.rules})
-    #             queries.extend(system.prolog.queries)
+    for ast, file in zip(asts, files):
+        if file == to_check_file:
+            continue
+        else:
+            prolog_file = file[:-3] + '.pl'
+            with Prolog(interface=PlInterface.File, file=base_dir / prolog_file) as prolog:
+                system = System(
+                    base_dir=base_dir,
+                    ast=ast,
+                    hs_file=base_dir / file,
+                    prolog_instance=prolog
+                )
+                system.marshal()
+                system.generate_intermediate({r.rid for r in system.rules})
+                queries.extend(system.prolog.queries)
 
     for ast, file in zip(asts, files):
         if file == to_check_file:
@@ -1200,7 +1200,7 @@ if __name__ == "__main__":
                 for query in system.prolog.queries:
                     print(str(query) + ',')
                 print('true.')
-                # system.prolog.queries.extend(queries)
+                system.prolog.queries.extend(queries)
                 #
-                diagnoses = system.type_check()
-                print('[' + ','.join([d.json() for d in diagnoses]) + ']')
+                # diagnoses = system.type_check()
+                # print('[' + ','.join([d.json() for d in diagnoses]) + ']')

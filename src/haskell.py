@@ -83,35 +83,6 @@ class CallGraph:
                     return v_type
         return self.FREE
 
-    # def has_usage(self, caller: str, callee: str) -> bool:
-    #     return callee in {name for name, alias in self.graph[caller]}
-    #
-    # def get_usages(self, caller: str, callee: str) -> list[tuple[str, str]]:
-    #     return [(name, alias) for name, alias in self.graph[caller] if name == callee]
-
-    # def all_usages(self) -> list[tuple[str, str, str]]:
-    #     usages = []
-    #     for caller, callees in self.graph.items():
-    #         usages.extend([(caller, callee, alias) for callee, alias in callees])
-    #     return usages
-
-    # def is_ancestor_of(self, parent: str, child: str) -> bool:
-    #     return parent in self.get_ancestors(child)
-    #
-    # def get_ancestors(self, name: str) -> set[str]:
-    #     ancestors = set()
-    #     for parent, children in self.closures.items():
-    #         if name in [c[0] for c in children] and parent != 'module':
-    #             ancestors.add(parent)
-    #             ancestors.update(self.get_ancestors(parent))
-    #     return ancestors
-
-    # def get_declarer(self, child: str) -> str:
-    #     for parent, children in self.closures.items():
-    #         if child in [c[0] for c in children]:
-    #             return parent
-    #     return 'module'
-
     def get_all_defined_names(self) -> set[str]:
         names: set[str] = set()
         for parent, children in self.closures.items():
@@ -336,13 +307,14 @@ class System:
     parser_bin = str(project_dir / "bin" / "haskell-parser.exe") if platform() == 'Windows' else str(
         project_dir / "bin" / "haskell-parser")
 
-    def __init__(self, base_dir: Path, hs_file: Path, ast, prolog_instance):
+    def __init__(self, base_dir: Path, file_id: int, hs_file: Path, ast, prolog_instance):
         self.ast: dict = ast
         self.base_dir: Path = base_dir
+        self.file_id: int = file_id
         self.hs_file_path: Path = hs_file
         self.include_prelude = True
         self.prolog: Prolog = prolog_instance
-        self.imports = []
+        self.imports = [(self.base_dir / 'Prelude.pl').as_posix()]
         self.file_content: str | None = None
         self.variable_counter: int = 0
         self.lambda_counter: int = 0
@@ -354,7 +326,7 @@ class System:
         self.call_graph: CallGraph = CallGraph()
 
     def reset(self):
-        self.__init__(self.base_dir, self.hs_file_path, self.ast, self.prolog)
+        self.__init__(self.base_dir, self.file_id, self.hs_file_path, self.ast, self.prolog)
 
     def fresh(self) -> Term:
         vid = self.variable_counter
@@ -366,7 +338,7 @@ class System:
     def bind(self, h: str) -> Term:
         vid = self.variable_counter
         self.variable_counter += 1
-        internal_name = f'Fresh{vid}'
+        internal_name = f'Fresh_{self.file_id}_{vid}'
         term = var(internal_name)
         if old := self.free_vars.get(h, False):
             self.free_vars[h] = old + [term]
@@ -580,14 +552,15 @@ class System:
 
         # Imports
         if self.include_prelude and self.hs_file_path.stem != 'Prelude':
-            prolog_file_path = (self.base_dir / 'Prelude.pl').as_posix()
-            term = Term(value={'functor': 'use_module', 'args': [
-                Term(value=prolog_file_path, kind=Kind.String)
-            ]}, kind=Kind.Struct)
-            self.prolog.add_import(term)
-            self.prolog.set_modules([prolog_file_path, *self.imports])
-        else:
+            # prolog_file_path = (self.base_dir / 'Prelude.pl').as_posix()
+            # term = Term(value={'functor': 'use_module', 'args': [
+            #     Term(value=prolog_file_path, kind=Kind.String)
+            # ]}, kind=Kind.Struct)
+            # self.prolog.add_import(term)
+            # self.prolog.set_modules([prolog_file_path, *self.imports])
             self.prolog.set_modules(self.imports)
+        else:
+            self.prolog.set_modules(self.imports[1:])
 
         for rule in self.rules:
             if rule.meta.head.name == 'module':
@@ -1167,9 +1140,11 @@ if __name__ == "__main__":
 
     asts = [c['ast'] for c in parsed_data['contents']]
     files = [c['file'] for c in parsed_data['contents']]
+    number_of_files = len(files)
 
-    queries = []
-    for ast, file in zip(asts, files):
+    call_graphs = {}
+    free_vars = {}
+    for ast, file, file_id in zip(asts, files, range(number_of_files)):
         if file == to_check_file:
             continue
         else:
@@ -1178,29 +1153,42 @@ if __name__ == "__main__":
                 system = System(
                     base_dir=base_dir,
                     ast=ast,
+                    file_id=file_id,
                     hs_file=base_dir / file,
                     prolog_instance=prolog
                 )
                 system.marshal()
                 system.generate_intermediate({r.rid for r in system.rules})
-                queries.extend(system.prolog.queries)
+                call_graphs[system.file_id] = system.call_graph.graph
+                free_vars[system.file_id] = system.free_vars
 
-    for ast, file in zip(asts, files):
+    for ast, file, file_id in zip(asts, files, range(number_of_files)):
         if file == to_check_file:
             prolog_file = file[:-3] + '.pl'
             with Prolog(interface=PlInterface.File, file=base_dir / prolog_file) as prolog:
                 system = System(
                     base_dir=base_dir,
                     ast=ast,
+                    file_id=file_id,
                     hs_file=base_dir / file,
                     prolog_instance=prolog
                 )
+
                 system.marshal()
+
+                for system_import in system.imports:
+                    for fid, file in enumerate(files):
+                        imporetd_pl_file = Path(system_import).relative_to(base_dir)
+                        if imporetd_pl_file == Path(file).with_suffix('.pl'):
+                            system.call_graph.graph.update(call_graphs[fid])
+                            system.free_vars.update(free_vars[fid])
+
+
+
                 system.generate_intermediate({r.rid for r in system.rules})
                 for query in system.prolog.queries:
                     print(str(query) + ',')
                 print('true.')
-                system.prolog.queries.extend(queries)
                 #
-                # diagnoses = system.type_check()
-                # print('[' + ','.join([d.json() for d in diagnoses]) + ']')
+                diagnoses = system.type_check()
+                print('[' + ','.join([d.json() for d in diagnoses]) + ']')

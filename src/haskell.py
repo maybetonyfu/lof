@@ -524,10 +524,10 @@ class System:
 
     def generate_goals(self):
         defined_names = self.call_graph.get_all_defined_names()
-        for h in defined_names:
-            var_term = var('_' + h)
-            frees = Term.array(*self.free_vars.get(h, []))
-            self.prolog.add_query(struct('type_of_' + h, var_term, frees))
+        # for h in defined_names:
+        #     var_term = var('_' + h)
+        #     frees = Term.array(*self.free_vars.get(h, []))
+        #     self.prolog.add_query(struct('type_of_' + h, var_term, frees))
 
         def traverse_call_stack(
                 caller_: str,
@@ -541,10 +541,11 @@ class System:
             else:
                 seen.add(caller_)
                 var_lookup = {}
-
                 def replace_free_var(v: Term) -> Term:
                     for callee, alias in callees:
-                        if v.value == alias:
+                        if caller_ == original_caller:
+                            return v
+                        elif v.value == alias:
                             if self.call_graph.var_type(callee) == CallGraph.FREE:
                                 if alias in var_lookup:
                                     return var_lookup[alias]
@@ -871,9 +872,7 @@ class System:
 
             # Exp types:
             case {'tag': 'Lit', 'contents': [ann, lit]}:
-                term_var = self.bind(head.name)
-                self.add_ambient_rule(term == term_var, head)
-                self.check_node(lit, term_var, head)
+                self.check_node(lit, term, head)
 
             case {'tag': 'Con', 'contents': [ann, qname]}:
                 self.check_node({'tag': 'Var', 'contents': [ann, qname]}, term, head)
@@ -884,7 +883,7 @@ class System:
                 self.call_graph.add_call(head.name, var_name, new_var.value)
                 self.add_rule(new_var == term,
                               head, ann,
-                              watch=new_var,
+                              watch=term,
                               rule_type=RuleType.Var, var_string=just(var_name))
 
             case {'tag': 'Tuple', 'contents': [ann, _, exps]}:
@@ -1201,10 +1200,11 @@ if __name__ == "__main__":
 
 
 
-                # system.generate_intermediate({r.rid for r in system.rules})
-                # for query in system.prolog.queries:
-                #     print(str(query) + ',')
-                # print('true.')
+                system.generate_intermediate({r.rid for r in system.rules})
+                system.generate_goals()
+                for query in system.prolog.queries:
+                    print(str(query) + ',')
+                print('true.')
                 #
-                diagnoses = system.type_check()
-                print('[' + ','.join([d.json() for d in diagnoses]) + ']')
+                # diagnoses = system.type_check()
+                # print('[' + ','.join([d.json() for d in diagnoses]) + ']')

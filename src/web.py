@@ -39,8 +39,10 @@ async def typecheck(file_path: str, user_id: str) -> list[Diagnosis]:
     parsed_data = ujson.loads(result.stdout)
     asts = [c['ast'] for c in parsed_data['contents']]
     files = [Path(c['file']).as_posix() for c in parsed_data['contents']]
-    queries = []
-    for ast, file in zip(asts, files):
+    number_of_files = len(files)
+    call_graphs = {}
+    free_vars = {}
+    for ast, file, file_id in zip(asts, files, range(number_of_files)):
         if file == file_path:
             continue
         else:
@@ -48,28 +50,39 @@ async def typecheck(file_path: str, user_id: str) -> list[Diagnosis]:
             with Prolog(interface=PlInterface.File, file=base_dir / prolog_file) as prolog:
                 system = System(
                     ast=ast,
+                    file_id=file_id,
                     hs_file=base_dir / file,
                     prolog_instance=prolog,
                     base_dir=base_dir
                 )
                 system.marshal()
-                queries.extend(system.prolog.queries)
                 system.generate_intermediate({r.rid for r in system.rules})
+                call_graphs[system.file_id] = system.call_graph.graph
+                free_vars[system.file_id] = system.free_vars
 
-    for ast, file in zip(asts, files):
+    for ast, file, file_id in zip(asts, files, range(number_of_files)):
         if file == file_path:
             prolog_file = file[:-3] + '.pl'
             with Prolog(interface=PlInterface.File, file=base_dir / prolog_file) as prolog:
                 system = System(
+                    base_dir=base_dir,
                     ast=ast,
+                    file_id=file_id,
                     hs_file=base_dir / file,
-                    prolog_instance=prolog,
-                    base_dir=base_dir
+                    prolog_instance=prolog
                 )
+
                 system.marshal()
-                system.prolog.queries.extend(queries)
+
+                for system_import in system.imports:
+                    for fid, file in enumerate(files):
+                        imporetd_pl_file = Path(system_import).relative_to(base_dir)
+                        if imporetd_pl_file == Path(file).with_suffix('.pl'):
+                            system.call_graph.graph.update(call_graphs[fid])
+                            system.free_vars.update(free_vars[fid])
+
+
                 diagnoses = system.type_check()
-                # print(diagnoses)
                 return diagnoses
 
 

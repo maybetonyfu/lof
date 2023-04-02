@@ -471,6 +471,7 @@ class System:
 
     def solve(self, rules: set[int]) -> bool | list:
         self.generate_intermediate(rules)
+        self.generate_goals()
         return self.prolog.run_file()
 
     def generate_intermediate(self, rules: set[int]):
@@ -491,49 +492,8 @@ class System:
             frees = Term.array(*self.free_vars.get(head, []))
             self.prolog.add_clause(Clause(head=struct('type_of_' + head, T, frees), body=body))
 
-        for h in defined_names:
-            var_term = var('_' + h)
-            frees = Term.array(*self.free_vars.get(h, []))
-            self.prolog.add_query(struct('type_of_' + h, var_term, frees))
 
-        def traverse_call_stack(
-                caller_: str,
-                callees: set[tuple[str, str]],
-                self_var: Term,
-                original_caller: str,
-                seen: set[str]
-        ):
-            if caller_ in seen:
-                return
-            else:
-                seen.add(caller_)
-                for callee, alias in callees:
-                    v_var = self.fresh() if self.call_graph.var_type(callee) == CallGraph.FREE else var(
-                        '_F_' + callee + '_' + original_caller)
-                    caller_free_vars = [v_var if v.value == alias else v for v in self.free_vars[caller_]]
-                    self.prolog.add_query(type_of(caller_, self_var, Term.array(*caller_free_vars)))
-                    if callee in self.call_graph.graph.keys():
-                        traverse_call_stack(
-                            callee,
-                            self.call_graph.graph[callee],
-                            v_var,
-                            original_caller,
-                            seen.copy()
-                        )
-                    else:
-                        self.prolog.add_query(
-                            type_of(callee, v_var, wildcard)
-                        )
 
-        for caller in self.call_graph.graph:
-            if self.call_graph.is_top_level(caller):
-                traverse_call_stack(
-                    caller,
-                    self.call_graph.graph[caller],
-                    var('_' + caller),
-                    caller,
-                    set()
-                )
 
         # Add rules for instance_of_XYZ(A, B) ...
         for cls in self.classes:
@@ -551,22 +511,78 @@ class System:
                     self.prolog.add_clause(Clause(head=clause_head, body=[r.body, *super_class_constraints]))
 
         # Imports
-        if self.include_prelude and self.hs_file_path.stem != 'Prelude':
-            # prolog_file_path = (self.base_dir / 'Prelude.pl').as_posix()
-            # term = Term(value={'functor': 'use_module', 'args': [
-            #     Term(value=prolog_file_path, kind=Kind.String)
-            # ]}, kind=Kind.Struct)
-            # self.prolog.add_import(term)
-            # self.prolog.set_modules([prolog_file_path, *self.imports])
+        if self.hs_file_path.stem != 'Prelude':
             self.prolog.set_modules(self.imports)
         else:
-            self.prolog.set_modules(self.imports[1:])
+            self.prolog.set_modules([i for i in self.imports if i != (self.base_dir / 'Prelude.pl').as_posix()])
 
         for rule in self.rules:
             if rule.meta.head.name == 'module':
                 self.prolog.add_import(rule.body)
 
         self.prolog.generate_file()
+
+    def generate_goals(self):
+        defined_names = self.call_graph.get_all_defined_names()
+        for h in defined_names:
+            var_term = var('_' + h)
+            frees = Term.array(*self.free_vars.get(h, []))
+            self.prolog.add_query(struct('type_of_' + h, var_term, frees))
+
+        def traverse_call_stack(
+                caller_: str,
+                callees: set[tuple[str, str]],
+                self_var: Term,
+                original_caller: str,
+                seen: set[str]
+        ):
+            if caller_ in seen:
+                return
+            else:
+                seen.add(caller_)
+                var_lookup = {}
+
+                def replace_free_var(v: Term) -> Term:
+                    for callee, alias in callees:
+                        if v.value == alias:
+                            if self.call_graph.var_type(callee) == CallGraph.FREE:
+                                if alias in var_lookup:
+                                    return var_lookup[alias]
+                                else:
+                                    new_var = self.fresh()
+                                    var_lookup[alias] = new_var
+                                    return new_var
+                            else:
+                                return var('_F_' + callee + '_' + original_caller)
+                    return wildcard
+
+
+                caller_free_vars = [replace_free_var(v) for v in self.free_vars[caller_]]
+                self.prolog.add_query(type_of(caller_, self_var, Term.array(*caller_free_vars)))
+
+                for callee, alias in callees:
+                    if callee in self.call_graph.graph.keys():
+                        traverse_call_stack(
+                            callee,
+                            self.call_graph.graph[callee],
+                            replace_free_var(var(alias)),
+                            original_caller,
+                            seen.copy()
+                        )
+                    else:
+                        self.prolog.add_query(
+                            type_of(callee, replace_free_var(var(alias)), wildcard)
+                        )
+
+        for caller in self.call_graph.graph:
+            if self.call_graph.is_top_level(caller):
+                traverse_call_stack(
+                    caller,
+                    self.call_graph.graph[caller],
+                    var('_' + caller),
+                    caller,
+                    set()
+                )
 
     def marshal(self):
         self.file_content = self.hs_file_path.read_text()
@@ -679,7 +695,7 @@ class System:
                     pragma_name = pragma['contents'][1]
                     match pragma_name:
                         case 'NoImplicitPrelude':
-                            self.include_prelude = False
+                            self.imports = [i for i in self.imports if i != (self.base_dir / 'Prelude.pl').as_posix()]
                         case _:
                             raise NotImplementedError()
 
@@ -1185,10 +1201,10 @@ if __name__ == "__main__":
 
 
 
-                system.generate_intermediate({r.rid for r in system.rules})
-                for query in system.prolog.queries:
-                    print(str(query) + ',')
-                print('true.')
+                # system.generate_intermediate({r.rid for r in system.rules})
+                # for query in system.prolog.queries:
+                #     print(str(query) + ',')
+                # print('true.')
                 #
                 diagnoses = system.type_check()
                 print('[' + ','.join([d.json() for d in diagnoses]) + ']')

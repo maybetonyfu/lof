@@ -6,7 +6,7 @@ from fastapi import FastAPI, Body
 from fastapi.responses import HTMLResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pathlib import Path
-from src.haskell import System, Error, Rule, Diagnosis
+from src.haskell import System, Error, Rule, Diagnosis, HeadType
 from pydantic import BaseModel
 from src.prolog import Prolog, PlInterface
 import shutil
@@ -42,6 +42,8 @@ async def typecheck(file_path: str, user_id: str) -> list[Diagnosis]:
     number_of_files = len(files)
     call_graphs = {}
     free_vars = {}
+    classes = {}
+    instance_rules = {}
     for ast, file, file_id in zip(asts, files, range(number_of_files)):
         if file == file_path:
             continue
@@ -56,9 +58,11 @@ async def typecheck(file_path: str, user_id: str) -> list[Diagnosis]:
                     base_dir=base_dir
                 )
                 system.marshal()
-                system.generate_intermediate({r.rid for r in system.rules})
+                system.generate_only()
                 call_graphs[system.file_id] = system.call_graph.graph
                 free_vars[system.file_id] = system.free_vars
+                classes[system.file_id] = system.classes
+                instance_rules[system.file_id] = [r for r in system.rules if r.meta.head.type == HeadType.InstanceOf]
 
     for ast, file, file_id in zip(asts, files, range(number_of_files)):
         if file == file_path:
@@ -73,15 +77,14 @@ async def typecheck(file_path: str, user_id: str) -> list[Diagnosis]:
                 )
 
                 system.marshal()
-
                 for system_import in system.imports:
                     for fid, file in enumerate(files):
                         imporetd_pl_file = Path(system_import).relative_to(base_dir)
                         if imporetd_pl_file == Path(file).with_suffix('.pl'):
                             system.call_graph.graph.update(call_graphs[fid])
                             system.free_vars.update(free_vars[fid])
-
-
+                            system.classes.update(classes[fid])
+                            system.rules.extend(instance_rules[fid])
                 diagnoses = system.type_check()
                 return diagnoses
 

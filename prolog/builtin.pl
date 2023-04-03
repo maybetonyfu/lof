@@ -1,3 +1,6 @@
+:- module(hs_builtin, [type_of_SYMcn/2,type_of_error/2,member1/2]).
+
+
 type_of_SYMcn(T, _) :-
   '='(FreshB22, T),
   '='(FreshB23, _a),
@@ -8,9 +11,7 @@ type_of_SYMcn(T, _) :-
   '='(FreshB24, adt('[|]'(function, '[|]'(FreshB25, '[|]'(FreshB26, nil))))),
   '='(FreshB22, adt('[|]'(function, '[|]'(FreshB23, '[|]'(FreshB24, nil))))).
 
-type_of_error(T, _) :- true.
-
-instance_of_num(int).
+type_of_error(_, _).
 
 member1(L,[L|_]) :- !.
 member1(L,[_|RS]) :- member1(L,RS).

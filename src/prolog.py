@@ -135,7 +135,8 @@ class Prolog(ContextDecorator):
             predicate = value['functor']
             pubs.append(f'{predicate}/2')
         pub_string = ','.join(pubs)
-        header = f":- module({module_name}, [{pub_string}])."
+        header = f""":- module({module_name}, [{pub_string}]).
+:- reexport('{self.builtin.as_posix()}')."""
         imports = '\n'.join([f":- reexport('{m}')." for m in self.modules])
         clauses = '\n'.join([c.__str__() + '.' for c in self.clauses])
         return '\n'.join([header, imports, clauses])
@@ -190,9 +191,8 @@ class Prolog(ContextDecorator):
             f.write(self.generate_script())
 
     def run_file(self) -> bool | list[bool | dict]:
-        consult_modules = [f"consult('{m}')" for m in self.modules]
         consult_query = ','.join(['style_check(-singleton)'] +
-                                 [f"consult('{self.builtin.as_posix()}')"] +
+                                 # [f"consult('{self.builtin.as_posix()}')"] +
                                  # consult_modules +
                                  [f"consult('{self.file.as_posix()}')"] +
                                  [q.__str__() for q in self.queries])

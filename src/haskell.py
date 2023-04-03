@@ -227,6 +227,7 @@ class RuleType(Enum):
     Class = "Class"
     Tuple = "Tuple"
     Pattern = "Pattern"
+    TypeClass = "TypeClass"
 
 
 class HeadType(Enum):
@@ -237,14 +238,15 @@ class HeadType(Enum):
 class Head(BaseModel):
     name: str
     type: HeadType
+    instance_id: None|int
 
     @classmethod
     def type_of(cls, variable_name: str):
-        return cls(name=variable_name, type=HeadType.TypeOf)
+        return cls(name=variable_name, type=HeadType.TypeOf, instance_id=None)
 
     @classmethod
-    def instance_of(cls, inst_name: str):
-        return cls(name=inst_name, type=HeadType.InstanceOf)
+    def instance_of(cls, inst_name: str, instance_id: int | None = None):
+        return cls(name=inst_name, type=HeadType.InstanceOf, instance_id=instance_id)
 
 
 class RuleMeta(BaseModel):
@@ -314,9 +316,11 @@ class System:
         self.hs_file_path: Path = hs_file
         self.include_prelude = True
         self.prolog: Prolog = prolog_instance
-        self.imports = [(self.base_dir / 'Prelude.pl').as_posix()]
+        self.imports = [] if self.hs_file_path == self.base_dir / "Prelude.hs" else [
+            (self.base_dir / 'Prelude.pl').as_posix()]
         self.file_content: str | None = None
         self.variable_counter: int = 0
+        self.instance_counter : int = 0
         self.lambda_counter: int = 0
         self.free_vars: dict[str, list[Term]] = defaultdict(list)  # (head, Intermediate variables).
         self.rules: list[Rule] = []
@@ -356,6 +360,10 @@ class System:
         name = f'lambda{self.lambda_counter}'
         self.lambda_counter += 1
         return name
+
+    def get_instance_id(self) -> int:
+        self.instance_counter += 1
+        return self.instance_counter
 
     def _add_rule(self, body: Term, head: Head, ann: Maybe[dict], watch: Maybe[Term], rule_type: RuleType,
                   var_string: Maybe[str]):
@@ -397,7 +405,8 @@ class System:
         for error in list(reversed(self.tc_errors)):
             all_rule_ids = set().union(*[mus.rules for mus in error.mus_list])
             all_rules = [self.rules[rid] for rid in all_rule_ids]
-            all_decl_names = {r.meta.head.name for r in all_rules}
+            all_decl_names = {r.meta.head.name for r in all_rules if r.meta.head.type == HeadType.TypeOf}
+            print(all_decl_names)
             all_decls = [Decl(
                 name=decode(decl_name),
                 loc=[rule.meta.loc for rule in self.rules if
@@ -417,10 +426,14 @@ class System:
 
                 for rule in mcs_rules:
                     is_mismatch_decl = rule.meta.head.name in usages.keys()
+                    is_type_class_missing = rule.meta.type == RuleType.TypeClass
                     is_type_change = rule.meta.type == RuleType.Type
                     a = Airium(source_minify=True)
                     with a.div(klass='suggestion'):
-                        if is_type_change and not is_mismatch_decl:
+                        if is_type_class_missing:
+                            a.span(_t="Removing the type class constraint")
+                            a.span(_t=rule.meta.src_text.value, klass='code type primary')
+                        elif is_type_change and not is_mismatch_decl:
                             a.span(_t='Change')
                             a.span(_t=rule.meta.src_text.value, klass='code type primary')
                             a.span(_t='to')
@@ -469,46 +482,40 @@ class System:
     def solve_bool(self, rules: set[int]) -> bool:
         return self.solve(rules) is not False
 
-    def solve(self, rules: set[int]) -> bool | list:
-        self.generate_intermediate(rules)
-        self.generate_goals()
-        return self.prolog.run_file()
-
-    def generate_intermediate(self, rules: set[int]):
+    def generate_only(self):
         self.prolog.set_queries([])
         self.prolog.set_clauses([])
         self.prolog.set_imports([])
+        self.generate_typing_clauses({r.rid for r in self.rules})
+        self.prolog.generate_file()
 
+    def solve(self, rules: set[int]) -> bool | list:
+        self.prolog.set_queries([])
+        self.prolog.set_clauses([])
+        self.prolog.set_imports([])
+        self.generate_typing_clauses(rules)
+        self.generate_instance_clauses(rules)
+
+        self.prolog.generate_file()
+        self.generate_goals()
+
+        return self.prolog.run_file()
+
+    def generate_typing_clauses(self, rules: set[int]):
+        current_file_name = str(self.hs_file_path.relative_to(self.base_dir))
         defined_names = self.call_graph.get_all_defined_names()
         clause_map: dict[str, list[Term]] = {v: [] for v in defined_names}
-        active_rules = [r for r in self.rules if r.rid in rules or r.is_ambient()]
+        active_rules = [r for r in self.rules if (r.rid in rules)
+                        or r.is_ambient()
+                        or r.meta.loc[0] != current_file_name]
 
         for r in active_rules:
-            # Add rules for type_of_XYZ(A, B) ...
             if r.meta.head.name != 'module' and r.meta.head.type == HeadType.TypeOf:
                 clause_map[r.meta.head.name] = clause_map[r.meta.head.name] + [r.body]
 
         for head, body in clause_map.items():
             frees = Term.array(*self.free_vars.get(head, []))
             self.prolog.add_clause(Clause(head=struct('type_of_' + head, T, frees), body=body))
-
-
-
-
-        # Add rules for instance_of_XYZ(A, B) ...
-        for cls in self.classes:
-            clause = Clause(head=instance_of(cls, T),
-                            body=require(cls))
-            self.prolog.add_clause(clause)
-            for r in self.rules:
-                if r.meta.head.type == HeadType.InstanceOf and r.meta.head.name == cls:
-                    clause_head = struct("instance_of_" + cls,
-                                         T,
-                                         wildcard,
-                                         )
-                    super_classes = self.super_classes.get(cls, [])
-                    super_class_constraints = [instance_of(s, T) for s in super_classes]
-                    self.prolog.add_clause(Clause(head=clause_head, body=[r.body, *super_class_constraints]))
 
         # Imports
         if self.hs_file_path.stem != 'Prelude':
@@ -520,15 +527,37 @@ class System:
             if rule.meta.head.name == 'module':
                 self.prolog.add_import(rule.body)
 
-        self.prolog.generate_file()
+    def generate_instance_clauses(self, rules: set[int]):
+        current_file_name = str(self.hs_file_path.relative_to(self.base_dir))
+        active_rules = [r for r in self.rules if r.rid in rules
+                        or r.is_ambient()
+                        or r.meta.loc[0] != current_file_name]
+
+        for cls in self.classes:
+            clause = Clause(head=instance_of(cls, T),
+                            body=require(cls))
+            self.prolog.add_clause(clause)
+
+
+            instance_ids = {r.meta.head.instance_id for r in active_rules
+                            if r.meta.head.type == HeadType.InstanceOf
+                                and r.meta.head.name == cls
+                                and r.meta.head.instance_id is not None}
+            common_instannce_rules = [r.body for r in active_rules if r.meta.head.type == HeadType.InstanceOf and
+                                      r.meta.head.name == cls and r.meta.head.instance_id is None]
+            for instance_id in instance_ids:
+                per_instance_rule = [r.body for r in active_rules if r.meta.head.type == HeadType.InstanceOf
+                                     and r.meta.head.name == cls and r.meta.head.instance_id == instance_id]
+
+                clause_head = struct("instance_of_" + cls,
+                                     T,
+                                     wildcard,
+                                     )
+                    # super_classes = self.super_classes.get(cls, [])
+                    # super_class_constraints = [instance_of(s, T) for s in super_classes]
+                self.prolog.add_clause(Clause(head=clause_head, body=per_instance_rule + common_instannce_rules))
 
     def generate_goals(self):
-        defined_names = self.call_graph.get_all_defined_names()
-        # for h in defined_names:
-        #     var_term = var('_' + h)
-        #     frees = Term.array(*self.free_vars.get(h, []))
-        #     self.prolog.add_query(struct('type_of_' + h, var_term, frees))
-
         def traverse_call_stack(
                 caller_: str,
                 callees: set[tuple[str, str]],
@@ -542,26 +571,30 @@ class System:
                 seen.add(caller_)
                 var_lookup = {}
                 def replace_free_var(v: Term) -> Term:
-                    for callee, alias in callees:
+                    for callee_, alias_ in callees:
                         if caller_ == original_caller:
                             return v
-                        elif v.value == alias:
-                            if self.call_graph.var_type(callee) == CallGraph.FREE:
-                                if alias in var_lookup:
-                                    return var_lookup[alias]
+                        elif v.value == alias_:
+                            if self.call_graph.var_type(callee_) == CallGraph.FREE:
+                                if alias_ in var_lookup:
+                                    return var_lookup[alias_]
                                 else:
                                     new_var = self.fresh()
-                                    var_lookup[alias] = new_var
+                                    var_lookup[alias_] = new_var
                                     return new_var
                             else:
-                                return var('_F_' + callee + '_' + original_caller)
+                                return var('_F_' + callee_ + '_' + original_caller)
                     return wildcard
 
-
-                caller_free_vars = [replace_free_var(v) for v in self.free_vars[caller_]]
+                caller_free_vars = self.free_vars[caller_] if caller_ == original_caller else [replace_free_var(v) for v
+                                                                                               in
+                                                                                               self.free_vars[caller_]]
                 self.prolog.add_query(type_of(caller_, self_var, Term.array(*caller_free_vars)))
 
                 for callee, alias in callees:
+                    if self.call_graph.var_type(callee) == CallGraph.BOUND and caller_ == original_caller:
+                        self.prolog.add_query(var('_F_' + callee + '_' + original_caller) == replace_free_var(var(alias)))
+
                     if callee in self.call_graph.graph.keys():
                         traverse_call_stack(
                             callee,
@@ -575,26 +608,31 @@ class System:
                             type_of(callee, replace_free_var(var(alias)), wildcard)
                         )
 
-        for caller in self.call_graph.graph:
-            if self.call_graph.is_top_level(caller):
-                traverse_call_stack(
-                    caller,
-                    self.call_graph.graph[caller],
-                    var('_' + caller),
-                    caller,
-                    set()
-                )
+        for caller, _ in self.call_graph.closures['module']:
+            traverse_call_stack(
+                caller,
+                self.call_graph.graph[caller],
+                var('_' + caller),
+                caller,
+                set()
+            )
 
     def marshal(self):
         self.file_content = self.hs_file_path.read_text()
         self.check_node(self.ast, atom('true'), Head.type_of('module'))
 
     def type_check(self) -> list[Diagnosis]:
-        prolog_result = self.solve({r.rid for r in self.rules if not r.is_ambient()})
+        self.tc_errors = []
+        prolog_result = self.solve({r.rid for r in self.rules if
+                                    (not r.is_ambient()) and
+                                    (self.base_dir / r.meta.loc[0] == self.hs_file_path)})
+
         if prolog_result:
             return []
         else:
-            marco = Marco(rules={r.rid for r in self.rules if not r.is_ambient()}, sat_fun=self.solve_bool)
+            marco = Marco(rules={r.rid for r in self.rules if (not r.is_ambient()) and
+                                 (self.base_dir / r.meta.loc[0] == self.hs_file_path)
+                                 }, sat_fun=self.solve_bool)
             marco.run()
             marco.analyse()
             self.tc_errors = marco.tc_errors
@@ -647,8 +685,9 @@ class System:
                     case _:
                         raise NotImplementedError()
 
-    def get_context(self, node_ast) -> list[tuple[str, str]]:
+    def get_context(self, node_ast) -> list[tuple[str, str, dict]]:
         def get_assertion(assertion_):
+            print(ujson.dumps(assertion_))
             if assertion_['tag'] == 'ParenA':
                 assertion_ = assertion_['contents'][1]
             type_app = assertion_['contents'][1]
@@ -660,10 +699,10 @@ class System:
 
             class_name: str = self.get_name(type_con['contents'][1], True)
             var_name = type_var['contents'][1]['contents'][1]
-            return class_name, var_name
+            return class_name, var_name, assertion_['contents'][0]
 
         match node_ast:
-            case {'tag': 'CxSingle', 'contents': [_, assertion]}:
+            case {'tag': 'CxSingle', 'contents': [ann, assertion]}:
                 return [get_assertion(assertion)]
 
             case {'tag': 'CxTuple', 'contents': [_, assertions]}:
@@ -732,7 +771,7 @@ class System:
                 if instRule['tag'] == 'IRule':
                     [_, _, context, ins_head] = instRule['contents']
                     class_name, type_ast = get_instance_head(ins_head)
-                    self.check_node(type_ast, T, Head.instance_of(class_name), toplevel=True)
+                    self.check_node(type_ast, T, Head.instance_of(class_name, self.get_instance_id()), toplevel=True)
 
                 elif instRule['tag'] == 'IParen':
                     self.check_node({'tag': 'InstDecl', 'contents': [ann, None, instRule['contents'][1], instDecl]},
@@ -742,8 +781,17 @@ class System:
                 [class_name, *vs_names] = self.get_head_name(decl_head, [])
                 self.classes.add(class_name)
 
-                super_classes: list[tuple[str, str]] = [] if context is None else self.get_context(context)
-                self.super_classes[class_name] = [cls[0] for cls in super_classes]
+                super_classes: list[tuple[str, str, dict]] = [] if context is None else self.get_context(context)
+                for cls, var_name, assertion_loc in super_classes:
+                    self.add_rule(
+                        instance_of(cls, T, wildcard),
+                        Head.instance_of(class_name),
+                        assertion_loc,
+                        nothing,
+                        RuleType.TypeClass
+                    )
+
+                # self.super_classes[class_name] = [cls[0] for cls in super_classes]
 
                 assert (len(vs_names) == 1)
                 var_name = vs_names[0]
@@ -950,6 +998,12 @@ class System:
                 self.call_graph.add_call(head.name, fun_name, lambda_var.value)
                 self.add_rule(lambda_var == term, head, ann, watch=lambda_var, rule_type=RuleType.App)
 
+            case {'tag': 'Do', 'contents': [_, stmts]}:
+                for stmt in stmts[:-1]:
+                    self.check_node(stmt, term, head)
+                assert stmts[-1]['tag'] == 'Qualifier'
+                self.check_node(stmts[-1]['contents'][1], term, head)
+
             case {'tag': 'Paren', 'contents': [_, exp]}:
                 self.check_node(exp, term, head)
 
@@ -987,6 +1041,28 @@ class System:
                 self.add_rule(term == list_of(elem_var), head, ann, watch=term, rule_type=RuleType.Lit)
                 for exp in exps:
                     self.check_node(exp, elem_var, head)
+
+            # Statements
+            case {'tag': 'Generator', 'contents': [ann, pat, exp]}:
+                v_exp = self.bind(head.name)
+                v_pat = self.bind(head.name)
+                self.check_node(exp, v_exp, head)
+                monad_var = self.bind(head.name)
+                self.add_ambient_rule(struct('adt', cons(monad_var, wildcard)) == term, head)
+                self.add_rule(
+                    adt(monad_var, [v_pat]) == v_exp, head, ann, watch=v_exp, rule_type=RuleType.App)
+                self.check_node(pat, v_pat, head)
+
+            case {'tag': 'Qualifier', 'contents': [ann, exp]}:
+                v_exp = self.bind(head.name)
+                self.check_node(exp, v_exp, head)
+                monad_var = self.bind(head.name)
+                self.add_ambient_rule(struct('adt', cons(monad_var, wildcard)) == term, head)
+                self.add_rule(
+                    struct('adt', cons(monad_var, wildcard)) == v_exp, head, ann, watch=v_exp, rule_type=RuleType.App)
+
+            case {'tag': 'LetStmt', 'contents': [ann,  exp]}:
+                raise NotImplementedError("LetStmt")
 
             # Lit nodes:
             case {'tag': 'Char', 'contents': [ann, _, _]}:
@@ -1072,14 +1148,17 @@ class System:
             case {'tag': 'TyParen', 'contents': [_, ty]}:
                 self.check_node(ty, term, head)
 
-            case {'tag': 'TyForall', 'contents': [ann, _, _context, t]}:
-                qualifications = self.get_context(_context)
-                for [class_name, type_var_name] in qualifications:
-                    v = self.bind(head.name)
-                    self.add_ambient_rule(v == var('_' + type_var_name), head)
-                    self.add_ambient_rule(
+            case {'tag': 'TyForall', 'contents': [_, _, _context, t]}:
+                qualifications: list[tuple[str, str, dict]] = self.get_context(_context)
+                for [class_name, type_var_name, ann] in qualifications:
+                    # v = self.bind(head.name)
+                    # self.add_ambient_rule(v == var('_' + type_var_name), head)
+                    self.add_rule(
                         instance_of(class_name, var('_' + type_var_name), wildcard),
-                        head
+                        head,
+                        ann,
+                        watch=nothing,
+                        rule_type=RuleType.TypeClass
                     )
                 self.check_node(t, term, head)
 
@@ -1159,6 +1238,8 @@ if __name__ == "__main__":
 
     call_graphs = {}
     free_vars = {}
+    classes = {}
+    instance_rules = {}
     for ast, file, file_id in zip(asts, files, range(number_of_files)):
         if file == to_check_file:
             continue
@@ -1173,9 +1254,11 @@ if __name__ == "__main__":
                     prolog_instance=prolog
                 )
                 system.marshal()
-                system.generate_intermediate({r.rid for r in system.rules})
+                system.generate_only()
                 call_graphs[system.file_id] = system.call_graph.graph
                 free_vars[system.file_id] = system.free_vars
+                classes[system.file_id] = system.classes
+                instance_rules[system.file_id] = [r for r in system.rules if r.meta.head.type == HeadType.InstanceOf]
 
     for ast, file, file_id in zip(asts, files, range(number_of_files)):
         if file == to_check_file:
@@ -1197,14 +1280,13 @@ if __name__ == "__main__":
                         if imporetd_pl_file == Path(file).with_suffix('.pl'):
                             system.call_graph.graph.update(call_graphs[fid])
                             system.free_vars.update(free_vars[fid])
+                            system.classes.update(classes[fid])
+                            system.rules.extend(instance_rules[fid])
 
-
-
-                system.generate_intermediate({r.rid for r in system.rules})
                 system.generate_goals()
-                for query in system.prolog.queries:
-                    print(str(query) + ',')
+                for goal in system.prolog.queries:
+                    print(goal.__str__() + ',')
                 print('true.')
-                #
-                # diagnoses = system.type_check()
-                # print('[' + ','.join([d.json() for d in diagnoses]) + ']')
+                diagnoses = system.type_check()
+                system.call_graph.show()
+                print('[' + ','.join([d.json() for d in diagnoses]) + ']')

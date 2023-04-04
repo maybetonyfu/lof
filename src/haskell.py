@@ -106,10 +106,12 @@ class Type:
 
     def __init__(self, json: dict | str, name: str):
         self.index = 0
+        self.degree = 0
         self.mapping: dict[str: str] = {}
         self.type_classes: dict[str, set[str]] = defaultdict(set)
         self.name = name
         self.type = self.from_json(json)
+
 
     def make_letter(self):
         letter = self.letters[self.index]
@@ -117,6 +119,7 @@ class Type:
         return letter
 
     def from_json(self, value: dict | str):
+        self.degree += 1
         match value:
             case '_':
                 return self.make_letter()
@@ -155,9 +158,17 @@ class Type:
                     else:
                         arg_types.append(self.from_json(arg))
 
+
                 return ' -> '.join(arg_types)
-            case {'functor': 'adt', 'args': args}:
-                return ' '.join([self.from_json(arg) for arg in args])
+            case {'functor': 'adt', 'args': x}:
+                [functor, arg, _] = prolog_list_to_list(x[0])
+                # if args[0]['functor'] == 'adt' and args[0]['args'][0]['functor'] == 'tuple':
+                result = ' '.join([self.from_json(arg) for arg in x])
+                if isinstance(arg, dict) and arg.get('functor') == 'adt' and arg.get('args', [{}])[0].get('functor') not in ['tuple', 'function', 'list']:
+                    return f'{self.from_json(functor)} ({self.from_json(arg)})'
+                else:
+                    return f'{self.from_json(functor)} {self.from_json(arg)}'
+
             case {'functor': 'require', 'args': [class_pl_list]}:
                 class_list = prolog_list_to_list(class_pl_list)
                 classes = {cls[len('class_'):] for cls in class_list[:-1]}
@@ -277,12 +288,16 @@ class Decl(BaseModel):
 class Suggestion(BaseModel):
     text: str
     title: str
+    score: int
+    fix_size: int
 
 
 class Cause(BaseModel):
     suggestions: list[Suggestion]
     decls: list[Decl]
     locs: list[Loc]
+    score : int
+    fix_size: int
 
 
 class Diagnosis(BaseModel):
@@ -406,7 +421,6 @@ class System:
             all_rule_ids = set().union(*[mus.rules for mus in error.mus_list])
             all_rules = [self.rules[rid] for rid in all_rule_ids]
             all_decl_names = {r.meta.head.name for r in all_rules if r.meta.head.type == HeadType.TypeOf}
-            print(all_decl_names)
             all_decls = [Decl(
                 name=decode(decl_name),
                 loc=[rule.meta.loc for rule in self.rules if
@@ -429,40 +443,49 @@ class System:
                     is_type_class_missing = rule.meta.type == RuleType.TypeClass
                     is_type_change = rule.meta.type == RuleType.Type
                     a = Airium(source_minify=True)
+                    score = 0
                     with a.div(klass='suggestion'):
                         if is_type_class_missing:
-                            a.span(_t="Removing the type class constraint")
+                            a.span(_t="Make sure the proper instance of the type class")
                             a.span(_t=rule.meta.src_text.value, klass='code type primary')
+                            a.span(_t='is implemented.')
                         elif is_type_change and not is_mismatch_decl:
                             a.span(_t='Change')
                             a.span(_t=rule.meta.src_text.value, klass='code type primary')
                             a.span(_t='to')
                             a.span(_t=str(types[rule.meta.watch.value.value]), klass='code type')
+                            score = types[rule.meta.watch.value.value].degree + 8
                         elif is_type_change and is_mismatch_decl:
                             a.span(_t='Change')
                             a.span(_t=rule.meta.src_text.value, klass='code type primary')
-                            a.span(_t='to')
-                            a.span(_t=str(types[rule.meta.watch.value.value]), klass='code type')
+                            a.span(_t='to a different type')
                             a.span(_t=', because that the function')
                             a.span(_t=rule.meta.head.name, klass='code term')
                             a.span(_t="is used as")
                             a.span(_t=str(types[usages[rule.meta.head.name].meta.watch.value.value]), klass='code type')
+                            score = types[usages[rule.meta.head.name].meta.watch.value.value].degree + 8
                         elif not is_type_change and not is_mismatch_decl:
                             a.span(_t='Change')
                             a.span(_t=rule.meta.src_text.value, klass='code term primary')
                             a.span(_t='to an instance of')
                             a.span(_t=str(types[rule.meta.watch.value.value]), klass='code type')
+                            score = types[rule.meta.watch.value.value].degree
                         elif not is_type_change and is_mismatch_decl:
                             a.span(_t='Change')
                             a.span(_t=rule.meta.src_text.value, klass='code term primary')
-                            a.span(_t='to an instance of')
-                            a.span(_t=str(types[rule.meta.watch.value.value]), klass='code type')
+                            a.span(_t='to a different expression')
                             a.span(_t=', because that the function')
                             a.span(_t=rule.meta.head.name, klass='code term')
                             a.span(_t="is used as")
                             a.span(_t=str(types[usages[rule.meta.head.name].meta.watch.value.value]), klass='code type')
+                            score = types[usages[rule.meta.head.name].meta.watch.value.value].degree
 
-                    suggestions.append(Suggestion(title=rule.meta.src_text.value, text=str(a)))
+                    suggestions.append(
+                        Suggestion(
+                            title=rule.meta.src_text.value,
+                            text=str(a),
+                            score=score,
+                            fix_size=len(rule.meta.src_text.value)))
 
                 locs = [r.meta.loc for r in mcs_rules]
                 cause = Cause(
@@ -471,11 +494,13 @@ class System:
                             all_decls)),
                     suggestions=suggestions,
                     locs=locs,
+                    fix_size = sum([s.fix_size for s in suggestions]),
+                    score = sum([s.score for s in suggestions])
                 )
                 causes.append(cause)
 
             diagnosis = Diagnosis(decls=all_decls,
-                                  causes=causes,
+                                  causes=sorted(causes, key=lambda c: (c.score, c.fix_size)),
                                   locs=[r.meta.loc for r in all_rules])
             yield diagnosis
 
@@ -687,7 +712,6 @@ class System:
 
     def get_context(self, node_ast) -> list[tuple[str, str, dict]]:
         def get_assertion(assertion_):
-            print(ujson.dumps(assertion_))
             if assertion_['tag'] == 'ParenA':
                 assertion_ = assertion_['contents'][1]
             type_app = assertion_['contents'][1]
@@ -814,7 +838,7 @@ class System:
                 [name, *vs_names] = self.get_head_name(head, [])
                 name = name[0].lower() + name[1:]
                 vs = [var('_' + v) for v in vs_names]
-                adt_var = adt(atom(name), vs)
+                adt_var = atom(name) if len(vs) == 0 else adt(atom(name), vs)
 
                 def get_first_instance_constant(ast):
                     match ast:
@@ -905,7 +929,6 @@ class System:
                     }, term, head)
 
             case {'tag': 'GuardedRhs', 'contents': [ann, stmts, exp]}:
-
                 self.check_node(exp, term, head)
                 for stmt in stmts:
                     match stmt:
@@ -1049,8 +1072,9 @@ class System:
                 self.check_node(exp, v_exp, head)
                 monad_var = self.bind(head.name)
                 self.add_ambient_rule(struct('adt', cons(monad_var, wildcard)) == term, head)
-                self.add_rule(
-                    adt(monad_var, [v_pat]) == v_exp, head, ann, watch=v_exp, rule_type=RuleType.App)
+
+                self.add_ambient_rule(
+                    adt(monad_var, [v_pat]) == v_exp, head)
                 self.check_node(pat, v_pat, head)
 
             case {'tag': 'Qualifier', 'contents': [ann, exp]}:
@@ -1097,32 +1121,23 @@ class System:
                 v2: Term
                 [v1, v2] = self.bind_n(2, head.name)
                 self.add_rule(term == adt(v1, [v2]), head, ann, watch=term, rule_type=RuleType.Type)
-                self.check_node(t1, v1, head)
                 self.check_node(t2, v2, head)
-
-            case {'tag': 'TyCon', 'contents': [ann, qname]}:
-                if qname['tag'] == 'UnQual':
-                    type_literal = qname['contents'][1]['contents'][1]
-                    match type_literal:
-                        case "Int":
-                            self.add_rule(term == t_int, head, ann, watch=term, rule_type=RuleType.Type)
-
-                        case "Char":
-                            self.add_rule(term == t_char, head, ann, watch=term, rule_type=RuleType.Type)
-
-                        case "String":
-                            self.add_rule(term == list_of(t_char), head, ann, watch=term,
-                                          rule_type=RuleType.Type)
-
-                        case "Float":
-                            self.add_rule(term == t_float, head, ann, watch=term, rule_type=RuleType.Type)
-
-                        case t:
-                            type_name = t[0].lower() + t[1:]
-                            self.add_rule(term == adt(atom(type_name), []), head, ann, watch=term,
-                                          rule_type=RuleType.Type)
-                else:
-                    raise NotImplementedError
+                self.check_node(t1, v1, head)
+                # match t1:
+                #     case {'tag': 'TyCon', 'contents': [ann, qname]}:
+                #         if qname['tag'] == 'UnQual':
+                #             type_literal = qname['contents'][1]['contents'][1]
+                #             type_name = type_literal[0].lower() + type_literal[1:]
+                #             self.add_rule(term == atom(type_name), head, ann, watch=term, rule_type=RuleType.Type)
+                #         elif qname['tag'] == 'Special':
+                #             match qname['contents'][1]:
+                #                 case {'tag': 'UnitCon', 'contents': _}:
+                #                     self.add_rule(term == t_unit, head, ann, watch=term, rule_type=RuleType.Type)
+                #                 case {'tag': 'ListCon', 'contents': _}:
+                #                     self.add_rule(term == atom('list'), head, ann, watch=term, rule_type=RuleType.Type)
+                #                 case _:
+                #                     raise Exception("Unknown special type: " + qname['contents'][1])
+                #     case _: self.check_node(t1, v1, head)
 
             case {'tag': 'TyFun', 'contents': [ann, t1, t2]}:
                 [var1, var2] = self.bind_n(2, head.name)
@@ -1151,8 +1166,6 @@ class System:
             case {'tag': 'TyForall', 'contents': [_, _, _context, t]}:
                 qualifications: list[tuple[str, str, dict]] = self.get_context(_context)
                 for [class_name, type_var_name, ann] in qualifications:
-                    # v = self.bind(head.name)
-                    # self.add_ambient_rule(v == var('_' + type_var_name), head)
                     self.add_rule(
                         instance_of(class_name, var('_' + type_var_name), wildcard),
                         head,

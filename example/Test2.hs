@@ -7,4 +7,9 @@ instance A Int where
 instance A Float where
     f x = x + 3
 
-v = f True
+class (A a) => B a where
+    g :: a -> a
+
+instance B Int where
+
+x = g 3

@@ -195,7 +195,8 @@ class Prolog(ContextDecorator):
                                  # [f"consult('{self.builtin.as_posix()}')"] +
                                  # consult_modules +
                                  [f"consult('{self.file.as_posix()}')"] +
-                                 [q.__str__() for q in self.queries])
+                                 ['once((' + ','.join([q.__str__() for q in self.queries]) + '))']
+                                 )
         return self.prolog_thread.query(consult_query)
 
     def run_console(self):
@@ -205,7 +206,9 @@ class Prolog(ContextDecorator):
                                  abolishes +
                                  # [f"consult('{self.prelude}')"]  +
                                  asserts +
-                                 [q.__str__() for q in self.queries])
+                                 ['once((' + ','.join([q.__str__() for q in self.queries]) + '))']
+
+                                 )
 
         return self.prolog_thread.query(consult_query)
 

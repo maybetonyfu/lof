@@ -11,6 +11,7 @@ class Kind(Enum):
     Struct = "Struct"
     Array = "Array"
     String = "String"
+    StructExtern = "StructExtern"
 
 
 class Term(BaseModel):
@@ -33,6 +34,13 @@ class Term(BaseModel):
         return cls(value=name, kind=Kind.Var)
 
     @classmethod
+    def struct_extern(cls, module: str, functor: str, *args: 'Term'):
+        # used for multifile prolog predicates with use_module/1, for example mod:pred(X, Y) :- ...
+        value = {'module': module, 'functor': functor, 'args': [arg.value for arg in args]}
+        assert is_prolog_functor(value)
+        return cls(value=value, kind=Kind.StructExtern)
+
+    @classmethod
     def struct(cls, functor: str, *args: 'Term'):
         value = {'functor': functor, 'args': [arg.value for arg in args]}
         assert is_prolog_functor(value)
@@ -47,6 +55,8 @@ class Term(BaseModel):
     def __str__(self):
         if self.kind == Kind.String:
             return f"'{self.value}'"
+        elif self.kind == Kind.StructExtern:
+            return f"{self.value['module']}:{json_to_prolog(self.value)}"
         else:
             return json_to_prolog(self.value)
 
@@ -60,6 +70,7 @@ class Term(BaseModel):
 var = Term.var
 atom = Term.atom
 struct = Term.struct
+struct_extern = Term.struct_extern
 array = Term.array
 succeed = atom('true')
 fail = atom('false')
@@ -113,10 +124,19 @@ class Prolog(ContextDecorator):
         self.builtin: Path = Path(__file__).parent.parent / 'prolog' / 'builtin.pl'
         self.clauses: list[Clause] = []
         self.queries: list[Term] = []
-        self.imports: list[Term] = []
         self.predicates: list[tuple[str, int]] = []
         self.modules: list[str] = []
+        self.multifiles: list[str] = []
+        self.use_module: set[str] = set()
         self.interface: PlInterface = interface
+
+    def reset(self):
+        self.clauses = []
+        self.queries = []
+        self.predicates = []
+        self.modules = []
+        self.multifiles = []
+        self.use_module = set()
 
     def __enter__(self):
         self.mqi = PrologMQI()
@@ -138,53 +158,27 @@ class Prolog(ContextDecorator):
         header = f""":- module({module_name}, [{pub_string}]).
 :- reexport('{self.builtin.as_posix()}')."""
         imports = '\n'.join([f":- reexport('{m}')." for m in self.modules])
+        multifile = ":- multifile "  + ",".join([f'{mf}' for mf in self.multifiles]) + "." if self.multifiles else ''
+        use_module = '\n'.join([f":- use_module('{m}')." for m in self.use_module])
         clauses = '\n'.join([c.__str__() + '.' for c in self.clauses])
-        return '\n'.join([header, imports, clauses])
+        return '\n'.join([header, imports, use_module, multifile, clauses])
 
-    def set_clauses(self, clauses: list[Clause]):
-        self.clauses = clauses
 
     def add_clause(self, clause: Clause):
         self.clauses.append(clause)
 
-    def add_import(self, imp: Term):
-        self.imports.append(imp)
-
-    def set_imports(self, qs: list[Term]):
-        self.imports = qs
-
-    def add_clauses(self, clauses: list[Clause]):
-        self.clauses += clauses
-
-    def set_queries(self, qs: list[Term]):
-        self.queries = qs
+    def add_use_module(self, module: Path):
+        self.use_module.add(module.as_posix())
 
     def add_query(self, q: Term):
         self.queries.append(q)
 
-    def add_queries(self, qs: list[Term]):
-        self.queries += qs
+    def add_multifile(self, multifile: str):
+        self.multifiles.append(multifile)
+
 
     def set_modules(self, modules: list[str]):
         self.modules = modules
-
-    def run(self):
-        if self.interface == PlInterface.File:
-            return self.run_file()
-        elif self.interface == PlInterface.Console:
-            return self.run_console()
-
-    def generate_asserts(self) -> list[str]:
-        return [f'assert(({c}))' for c in self.clauses]
-
-    def generate_abolishes(self) -> list[str]:
-        abolishes = [f'abolish({predicate}/{arity})' for predicate, arity in self.predicates]
-        self.predicates = []
-        for c in self.clauses:
-            value: dict = c.head.value
-            predicate = value['functor']
-            self.predicates.append((predicate, 2))
-        return abolishes
 
     def generate_file(self):
         with open(self.file, mode="w") as f:
@@ -192,28 +186,14 @@ class Prolog(ContextDecorator):
 
     def run_file(self) -> bool | list[bool | dict]:
         consult_query = ','.join(['style_check(-singleton)'] +
-                                 # [f"consult('{self.builtin.as_posix()}')"] +
-                                 # consult_modules +
                                  [f"consult('{self.file.as_posix()}')"] +
                                  ['once((' + ','.join([q.__str__() for q in self.queries]) + '))']
                                  )
+        print(consult_query)
         return self.prolog_thread.query(consult_query)
 
-    def run_console(self):
-        asserts = self.generate_asserts()
-        abolishes = self.generate_abolishes()
-        consult_query = ','.join(['style_check(-singleton)'] +
-                                 abolishes +
-                                 # [f"consult('{self.prelude}')"]  +
-                                 asserts +
-                                 ['once((' + ','.join([q.__str__() for q in self.queries]) + '))']
-
-                                 )
-
-        return self.prolog_thread.query(consult_query)
 
     def run_raw_query(self, raw: str):
-        # return self.prolog_thread.query(raw)
         self.prolog_thread.query_async(raw, find_all=False)
         result = self.prolog_thread.query_async_result()
         self.prolog_thread.cancel_query_async()

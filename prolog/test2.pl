@@ -1,5 +1,7 @@
-:- module(test2, [greeting/1]).
-:- reexport('test').
+:- module(mymod2, []).
+:- reexport('test.pl').
+:- use_module('test.pl').
 
-greeting(X):- hello(X).
+mymod:pet(cat).
+mymod:food(banana).
 

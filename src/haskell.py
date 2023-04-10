@@ -7,7 +7,7 @@ from airium import Airium
 from src.encoder import encode, decode
 from string import ascii_lowercase
 from src.prolog import Prolog, Term, atom, var, struct, Clause, PlInterface, cons, nil, Kind, wildcard, \
-    prolog_list_to_list
+    prolog_list_to_list, struct_extern
 from src.maybe import Maybe, nothing, just
 from src.marco import Marco, Error
 from pydantic import BaseModel
@@ -18,6 +18,14 @@ Point: TypeAlias = tuple[int, int]
 Span: TypeAlias = tuple[Point, Point]
 Loc: TypeAlias = tuple[str, Span]
 
+
+def get_module_name(file_path: Path | str) -> str:
+    if isinstance(file_path, str):
+        file_path = Path(file_path)
+    return '_'.join(list(file_path.parts))[0:-3]
+
+def module_to_prolog_path(module_name: str) -> Path:
+    return Path(module_name.replace('_', '/')).with_suffix('.pl')
 
 def adt(con: Term, args: list[Term]) -> Term:
     def unwrap(terms: list[Term]):
@@ -40,6 +48,10 @@ missing_instance: Term = atom('missing_instance')
 # Special Vars
 instance_name: Term = var('InstanceName')
 T: Term = var('T')
+
+
+def require_class(class_name: str, instance_var: Term, utility_var: Term = wildcard) -> Term:
+    return struct('require_class_' + class_name, instance_var, utility_var)
 
 
 def instance_of(class_name: str, instance_var: Term, utility_var: Term = wildcard) -> Term:
@@ -112,7 +124,6 @@ class Type:
         self.name = name
         self.type = self.from_json(json)
 
-
     def make_letter(self):
         letter = self.letters[self.index]
         self.index += 1
@@ -158,13 +169,13 @@ class Type:
                     else:
                         arg_types.append(self.from_json(arg))
 
-
                 return ' -> '.join(arg_types)
             case {'functor': 'adt', 'args': x}:
                 [functor, arg, _] = prolog_list_to_list(x[0])
                 # if args[0]['functor'] == 'adt' and args[0]['args'][0]['functor'] == 'tuple':
                 result = ' '.join([self.from_json(arg) for arg in x])
-                if isinstance(arg, dict) and arg.get('functor') == 'adt' and arg.get('args', [{}])[0].get('functor') not in ['tuple', 'function', 'list']:
+                if isinstance(arg, dict) and arg.get('functor') == 'adt' and arg.get('args', [{}])[0].get(
+                        'functor') not in ['tuple', 'function', 'list']:
                     return f'{self.from_json(functor)} ({self.from_json(arg)})'
                 else:
                     return f'{self.from_json(functor)} {self.from_json(arg)}'
@@ -249,15 +260,24 @@ class HeadType(Enum):
 class Head(BaseModel):
     name: str
     type: HeadType
-    instance_id: None|int
+    instance_id: None | int
+    from_module: str | None
 
     @classmethod
     def type_of(cls, variable_name: str):
-        return cls(name=variable_name, type=HeadType.TypeOf, instance_id=None)
+        return cls(
+            name=variable_name,
+            type=HeadType.TypeOf,
+            instance_id=None,
+            from_module=None)
 
     @classmethod
-    def instance_of(cls, inst_name: str, instance_id: int | None = None):
-        return cls(name=inst_name, type=HeadType.InstanceOf, instance_id=instance_id)
+    def instance_of(cls, inst_name: str, from_module: str, instance_id: int | None = None):
+        return cls(
+            name=inst_name,
+            type=HeadType.InstanceOf,
+            instance_id=instance_id,
+            from_module=from_module)
 
 
 class RuleMeta(BaseModel):
@@ -296,7 +316,7 @@ class Cause(BaseModel):
     suggestions: list[Suggestion]
     decls: list[Decl]
     locs: list[Loc]
-    score : int
+    score: int
     fix_size: int
 
 
@@ -319,6 +339,12 @@ def get_location(ann: dict[str, Any]) -> tuple[str, Span]:
         raise ValueError('Invalid annotation: ', ann)
 
 
+class TypeClass(BaseModel):
+    name: str
+    super_classes: list[str]
+    module: str
+
+
 class System:
     project_dir = Path(__file__).parent.parent
     parser_bin = str(project_dir / "bin" / "haskell-parser.exe") if platform() == 'Windows' else str(
@@ -329,23 +355,28 @@ class System:
         self.base_dir: Path = base_dir
         self.file_id: int = file_id
         self.hs_file_path: Path = hs_file
+        self.hs_path_rel: Path = hs_file.relative_to(base_dir)
         self.include_prelude = True
         self.prolog: Prolog = prolog_instance
         self.imports = [] if self.hs_file_path == self.base_dir / "Prelude.hs" else [
             (self.base_dir / 'Prelude.pl').as_posix()]
         self.file_content: str | None = None
         self.variable_counter: int = 0
-        self.instance_counter : int = 0
+        self.instance_counter: int = 0
         self.lambda_counter: int = 0
         self.free_vars: dict[str, list[Term]] = defaultdict(list)  # (head, Intermediate variables).
         self.rules: list[Rule] = []
         self.tc_errors: list[Error] = []
-        self.classes: set[str] = set()
-        self.super_classes: dict[str, list[str]] = defaultdict(list)
+        self.classes: list[TypeClass] = []
         self.call_graph: CallGraph = CallGraph()
 
     def reset(self):
-        self.__init__(self.base_dir, self.file_id, self.hs_file_path, self.ast, self.prolog)
+        self.__init__(
+            base_dir=self.base_dir,
+            file_id=self.file_id,
+            hs_file=self.hs_file_path,
+            ast=self.ast,
+            prolog_instance=self.prolog)
 
     def fresh(self) -> Term:
         vid = self.variable_counter
@@ -494,8 +525,8 @@ class System:
                             all_decls)),
                     suggestions=suggestions,
                     locs=locs,
-                    fix_size = sum([s.fix_size for s in suggestions]),
-                    score = sum([s.score for s in suggestions])
+                    fix_size=sum([s.fix_size for s in suggestions]),
+                    score=sum([s.score for s in suggestions])
                 )
                 causes.append(cause)
 
@@ -508,23 +539,35 @@ class System:
         return self.solve(rules) is not False
 
     def generate_only(self):
-        self.prolog.set_queries([])
-        self.prolog.set_clauses([])
-        self.prolog.set_imports([])
+        self.prolog.reset()
+        self.generate_type_classes()
         self.generate_typing_clauses({r.rid for r in self.rules})
+        self.generate_instance_clauses({r.rid for r in self.rules})
         self.prolog.generate_file()
 
     def solve(self, rules: set[int]) -> bool | list:
-        self.prolog.set_queries([])
-        self.prolog.set_clauses([])
-        self.prolog.set_imports([])
+        self.prolog.reset()
+        self.generate_type_classes()
         self.generate_typing_clauses(rules)
         self.generate_instance_clauses(rules)
-
         self.prolog.generate_file()
         self.generate_goals()
 
         return self.prolog.run_file()
+
+    def generate_type_classes(self):
+        for tc in self.classes:
+            super_classes = tc.super_classes
+            super_class_rules = [instance_of(super_class, T) for super_class in super_classes]
+            self.prolog.add_multifile(f'instance_of_{tc.name}/2')
+            self.prolog.add_clause(
+                Clause(head=require_class(tc.name, T),
+                       body=[instance_of(tc.name, T)] + super_class_rules
+                       )
+            )
+            self.prolog.add_clause(
+                Clause(head=instance_of(tc.name, T), body=require(tc.name))
+            )
 
     def generate_typing_clauses(self, rules: set[int]):
         current_file_name = str(self.hs_file_path.relative_to(self.base_dir))
@@ -548,39 +591,29 @@ class System:
         else:
             self.prolog.set_modules([i for i in self.imports if i != (self.base_dir / 'Prelude.pl').as_posix()])
 
-        for rule in self.rules:
-            if rule.meta.head.name == 'module':
-                self.prolog.add_import(rule.body)
-
     def generate_instance_clauses(self, rules: set[int]):
-        current_file_name = str(self.hs_file_path.relative_to(self.base_dir))
         active_rules = [r for r in self.rules if r.rid in rules
-                        or r.is_ambient()
-                        or r.meta.loc[0] != current_file_name]
-
-        for cls in self.classes:
-            clause = Clause(head=instance_of(cls, T),
-                            body=require(cls))
-            self.prolog.add_clause(clause)
-
-
+                        or r.is_ambient()]
+        classes = {r.meta.head.name for r in active_rules if r.meta.head.type == HeadType.InstanceOf}
+        for cls in classes:
+            module: str = [r for r in active_rules
+                           if r.meta.head.type == HeadType.InstanceOf
+                           and r.meta.head.name == cls][0].meta.head.from_module
+            if get_module_name(self.hs_path_rel) != module:
+                self.prolog.add_use_module(module_to_prolog_path(module))
             instance_ids = {r.meta.head.instance_id for r in active_rules
                             if r.meta.head.type == HeadType.InstanceOf
-                                and r.meta.head.name == cls
-                                and r.meta.head.instance_id is not None}
-            common_instannce_rules = [r.body for r in active_rules if r.meta.head.type == HeadType.InstanceOf and
-                                      r.meta.head.name == cls and r.meta.head.instance_id is None]
-            for instance_id in instance_ids:
-                per_instance_rule = [r.body for r in active_rules if r.meta.head.type == HeadType.InstanceOf
-                                     and r.meta.head.name == cls and r.meta.head.instance_id == instance_id]
+                            and r.meta.head.name == cls
+                            and r.meta.head.instance_id is not None}
 
-                clause_head = struct("instance_of_" + cls,
-                                     T,
-                                     wildcard,
-                                     )
-                    # super_classes = self.super_classes.get(cls, [])
-                    # super_class_constraints = [instance_of(s, T) for s in super_classes]
-                self.prolog.add_clause(Clause(head=clause_head, body=per_instance_rule + common_instannce_rules))
+            for instance_id in instance_ids:
+                per_instance_rule = [r.body for r in active_rules
+                                     if r.meta.head.type == HeadType.InstanceOf
+                                     and r.meta.head.name == cls
+                                     and r.meta.head.instance_id == instance_id]
+
+                clause_head = struct_extern(f'user_{module}', f'instance_of_{cls}', T, wildcard)
+                self.prolog.add_clause(Clause(head=clause_head, body=per_instance_rule))
 
     def generate_goals(self):
         def traverse_call_stack(
@@ -595,6 +628,7 @@ class System:
             else:
                 seen.add(caller_)
                 var_lookup = {}
+
                 def replace_free_var(v: Term) -> Term:
                     for callee_, alias_ in callees:
                         if caller_ == original_caller:
@@ -618,7 +652,8 @@ class System:
 
                 for callee, alias in callees:
                     if self.call_graph.var_type(callee) == CallGraph.BOUND and caller_ == original_caller:
-                        self.prolog.add_query(var('_F_' + callee + '_' + original_caller) == replace_free_var(var(alias)))
+                        self.prolog.add_query(
+                            var('_F_' + callee + '_' + original_caller) == replace_free_var(var(alias)))
 
                     if callee in self.call_graph.graph.keys():
                         traverse_call_stack(
@@ -672,6 +707,15 @@ class System:
         types = {decode(key[1:]) if key.startswith('_') else decode(key): Type(value, key) for key, value in
                  result[0].items()}
         return types
+
+    def get_module(self, node) -> str:
+        match node:
+            case {'tag': 'UnQual', 'contents': [ann, ident]}:
+                if ann['scope'].get('type') == 'GlobalSymbol':
+                    return ann['scope']['Symbol']['module'].replace('.', '_')
+
+            case _:
+                raise NotImplementedError()
 
     def get_name(self, node, toplevel: bool) -> str:
         match node:
@@ -780,22 +824,25 @@ class System:
                     self.check_node(decl, term, head, toplevel=True)
 
             case {'tag': 'InstDecl', 'contents': [ann, _, instRule, instDecl]}:
-                def get_instance_head(ast_) -> tuple[str, dict | None]:
+                def get_instance_head(ast_) -> tuple[str, str, dict | None]:
                     match ast_:
                         case {'tag': 'IHCon', 'contents': [ih_ann, qname]}:
                             class_name_ = self.get_name(qname, True)
-                            return class_name_, None
+                            module_name = self.get_module(qname)
+                            return class_name_, module_name, None
                         case {'tag': 'IHInfix', 'contents': [ih_ann, ih_type, qname]}:
                             raise NotImplementedError()
                         case {'tag': 'IHParen', 'contents': [ih_ann, ih_head]}:
                             return get_instance_head(ih_head)
                         case {'tag': 'IHApp', 'contents': [ih_ann, ih_head, ih_type]}:
-                            return get_instance_head(ih_head)[0], ih_type
+                            [class_name_, module_name, _] = get_instance_head(ih_head)
+                            return class_name_, module_name, ih_type
 
                 if instRule['tag'] == 'IRule':
                     [_, _, context, ins_head] = instRule['contents']
-                    class_name, type_ast = get_instance_head(ins_head)
-                    self.check_node(type_ast, T, Head.instance_of(class_name, self.get_instance_id()), toplevel=True)
+                    class_name, module_name, type_ast = get_instance_head(ins_head)
+                    self.check_node(type_ast, T, Head.instance_of(class_name, module_name, self.get_instance_id()),
+                                    toplevel=True)
 
                 elif instRule['tag'] == 'IParen':
                     self.check_node({'tag': 'InstDecl', 'contents': [ann, None, instRule['contents'][1], instDecl]},
@@ -803,17 +850,21 @@ class System:
 
             case {"tag": "ClassDecl", 'contents': [ann, context, decl_head, _, decls]}:
                 [class_name, *vs_names] = self.get_head_name(decl_head, [])
-                self.classes.add(class_name)
 
                 super_classes: list[tuple[str, str, dict]] = [] if context is None else self.get_context(context)
-                for cls, var_name, assertion_loc in super_classes:
-                    self.add_rule(
-                        instance_of(cls, T, wildcard),
-                        Head.instance_of(class_name),
-                        assertion_loc,
-                        nothing,
-                        RuleType.TypeClass
-                    )
+                self.classes.append(TypeClass(
+                    name=class_name,
+                    module=str(self.hs_file_path),
+                    super_classes=[cls[0] for cls in super_classes]))
+
+                # for cls, var_name, assertion_loc in super_classes:
+                #     self.add_rule(
+                #         require_class(cls, T, wildcard),
+                #         Head.instance_of(class_name),
+                #         assertion_loc,
+                #         nothing,
+                #         RuleType.TypeClass
+                #     )
 
                 # self.super_classes[class_name] = [cls[0] for cls in super_classes]
 
@@ -830,7 +881,7 @@ class System:
                         self.call_graph.add_closure('module', name, CallGraph.FREE)
                         self.add_ambient_rule(var('_' + var_name) == name_var, Head.type_of(name))
                         self.add_ambient_rule(
-                            instance_of(class_name, var('_' + var_name), wildcard),
+                            require_class(class_name, var('_' + var_name), wildcard),
                             Head.type_of(name))
                     self.check_node(type_decl, wildcard, Head.type_of('module'), toplevel)
 
@@ -853,9 +904,13 @@ class System:
                     for istRule in istRules:
                         qname = get_first_instance_constant(istRule)
                         class_name = self.get_name(qname, toplevel=True)
+                        module_name = self.get_module(qname)
                         self.add_ambient_rule(
                             T == adt_var,
-                            Head.instance_of(class_name))
+                            Head.instance_of(
+                                class_name,
+                                from_module=module_name,
+                            ))
 
                 for con_decl in con_decls:
                     decl = con_decl[3]
@@ -1085,7 +1140,7 @@ class System:
                 self.add_rule(
                     struct('adt', cons(monad_var, wildcard)) == v_exp, head, ann, watch=v_exp, rule_type=RuleType.App)
 
-            case {'tag': 'LetStmt', 'contents': [ann,  exp]}:
+            case {'tag': 'LetStmt', 'contents': [ann, exp]}:
                 raise NotImplementedError("LetStmt")
 
             # Lit nodes:
@@ -1167,7 +1222,7 @@ class System:
                 qualifications: list[tuple[str, str, dict]] = self.get_context(_context)
                 for [class_name, type_var_name, ann] in qualifications:
                     self.add_rule(
-                        instance_of(class_name, var('_' + type_var_name), wildcard),
+                        require_class(class_name, var('_' + type_var_name), wildcard),
                         head,
                         ann,
                         watch=nothing,
@@ -1251,8 +1306,7 @@ if __name__ == "__main__":
 
     call_graphs = {}
     free_vars = {}
-    classes = {}
-    instance_rules = {}
+
     for ast, file, file_id in zip(asts, files, range(number_of_files)):
         if file == to_check_file:
             continue
@@ -1270,8 +1324,7 @@ if __name__ == "__main__":
                 system.generate_only()
                 call_graphs[system.file_id] = system.call_graph.graph
                 free_vars[system.file_id] = system.free_vars
-                classes[system.file_id] = system.classes
-                instance_rules[system.file_id] = [r for r in system.rules if r.meta.head.type == HeadType.InstanceOf]
+
 
     for ast, file, file_id in zip(asts, files, range(number_of_files)):
         if file == to_check_file:
@@ -1284,17 +1337,13 @@ if __name__ == "__main__":
                     hs_file=base_dir / file,
                     prolog_instance=prolog
                 )
-
                 system.marshal()
-
                 for system_import in system.imports:
                     for fid, file in enumerate(files):
                         imporetd_pl_file = Path(system_import).relative_to(base_dir)
                         if imporetd_pl_file == Path(file).with_suffix('.pl'):
                             system.call_graph.graph.update(call_graphs[fid])
                             system.free_vars.update(free_vars[fid])
-                            system.classes.update(classes[fid])
-                            system.rules.extend(instance_rules[fid])
 
                 system.generate_goals()
                 for goal in system.prolog.queries:

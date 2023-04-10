@@ -1,14 +1,9 @@
-type_of_even(T, Callers) :-
-    member(even, Callers), !,
-    T = int.
+:- module(mymod, [pet/1, food/1, animal/1]).
+:- multifile pet/1, food/1.
 
-type_of_even(T, Callers) :-
-    T = int,
-    type_of_odd(T, [even|Callers]).
+mymod:pet(dog).
+mymod:food(carrot).
 
-type_of_odd(T, Callers) :-
-    member(odd, Callers), !,
-    T = int.
-type_of_odd(T, Callers) :-
-    T = int,
-    type_of_even(T, [odd|Callers]).
+
+
+animal(X) :- mymod:pet(X).

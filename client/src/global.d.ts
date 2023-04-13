@@ -10,6 +10,7 @@ export interface Diagnosis {
 
 export interface Decl {
     name: string,
+    display_name: string,
     type: string | null,
     loc: Loc
 }

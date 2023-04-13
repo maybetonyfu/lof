@@ -189,7 +189,6 @@ class Prolog(ContextDecorator):
                                  [f"consult('{self.file.as_posix()}')"] +
                                  ['once((' + ','.join([q.__str__() for q in self.queries]) + '))']
                                  )
-        print(consult_query)
         return self.prolog_thread.query(consult_query)
 
 
@@ -203,6 +202,4 @@ class Prolog(ContextDecorator):
 if __name__ == "__main__":
     with Prolog(interface=PlInterface.File, file=Path('./test.pl')) as prolog:
         r = prolog.run_raw_query(f'''member(a, X),member(b, X), X=[a]''')
-        # r2 = prolog.run_raw_query(f'''member(b, X)''')
-        # r = prolog.run()
         print(r)

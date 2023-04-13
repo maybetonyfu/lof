@@ -1,3 +1,5 @@
+module MaybeMonad where
+
 x :: Maybe Int
 x = do
   a <- Just '3'

@@ -6,7 +6,7 @@ from fastapi import FastAPI, Body
 from fastapi.responses import HTMLResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pathlib import Path
-from src.haskell import System, Error, Rule, Diagnosis, HeadType
+from src.haskell import System, Error, Rule, Diagnosis
 from pydantic import BaseModel
 from src.prolog import Prolog, PlInterface
 import shutil
@@ -37,54 +37,50 @@ async def typecheck(file_path: str, user_id: str) -> list[Diagnosis]:
 
     result = run(f'{parser_bin} {base_dir}', shell=True, check=True, capture_output=True)
     parsed_data = ujson.loads(result.stdout)
-    asts = [c['ast'] for c in parsed_data['contents']]
-    files = [Path(c['file']).as_posix() for c in parsed_data['contents']]
-    number_of_files = len(files)
+
     call_graphs = {}
     free_vars = {}
-    classes = {}
-    instance_rules = {}
-    for ast, file, file_id in zip(asts, files, range(number_of_files)):
-        if file == file_path:
+
+    for file_id, parse_result in enumerate(parsed_data['contents']):
+        ast = parse_result['ast']
+        file_ = Path(parse_result['file']).as_posix()
+        module_name = parse_result['moduleName']
+        if file_ == file_path:
             continue
         else:
-            prolog_file = file[:-3] + '.pl'
+            prolog_file = file_[:-3] + '.pl'
             with Prolog(interface=PlInterface.File, file=base_dir / prolog_file) as prolog:
                 system = System(
                     ast=ast,
                     file_id=file_id,
-                    hs_file=base_dir / file,
+                    hs_file=base_dir / file_,
                     prolog_instance=prolog,
-                    base_dir=base_dir
+                    base_dir=base_dir,
+                    module_name=module_name
                 )
                 system.marshal()
                 system.generate_only()
-                call_graphs[system.file_id] = system.call_graph.graph
-                free_vars[system.file_id] = system.free_vars
-                classes[system.file_id] = system.classes
-                instance_rules[system.file_id] = [r for r in system.rules if r.meta.head.type == HeadType.InstanceOf]
+                call_graphs.update(system.call_graph.graph)
+                free_vars.update(system.free_vars)
 
-    for ast, file, file_id in zip(asts, files, range(number_of_files)):
-        if file == file_path:
-            prolog_file = file[:-3] + '.pl'
+    for file_id, parse_result in enumerate(parsed_data['contents']):
+        ast = parse_result['ast']
+        file_ = Path(parse_result['file']).as_posix()
+        module_name = parse_result['moduleName']
+        if file_ == file_path:
+            prolog_file = file_[:-3] + '.pl'
             with Prolog(interface=PlInterface.File, file=base_dir / prolog_file) as prolog:
                 system = System(
                     base_dir=base_dir,
                     ast=ast,
                     file_id=file_id,
-                    hs_file=base_dir / file,
-                    prolog_instance=prolog
+                    hs_file=base_dir / file_,
+                    prolog_instance=prolog,
+                    module_name=module_name
                 )
 
                 system.marshal()
-                for system_import in system.imports:
-                    for fid, file in enumerate(files):
-                        imporetd_pl_file = Path(system_import).relative_to(base_dir)
-                        if imporetd_pl_file == Path(file).with_suffix('.pl'):
-                            system.call_graph.graph.update(call_graphs[fid])
-                            system.free_vars.update(free_vars[fid])
-                            system.classes.update(classes[fid])
-                            system.rules.extend(instance_rules[fid])
+                system.free_vars.update(free_vars)
                 diagnoses = system.type_check()
                 return diagnoses
 
@@ -115,7 +111,6 @@ async def home():
             <title>Editor</title>
             <link rel="icon" type="image/png" sizes="32x32" href="/static/favicon-32x32.png">
             <link rel="icon" type="image/png" sizes="16x16" href="/static/favicon-16x16.png">
-           
             <link rel="preconnect" href="https://fonts.googleapis.com">
             <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
             <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono&display=swap" rel="stylesheet">

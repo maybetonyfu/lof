@@ -1,3 +1,4 @@
+import string
 from collections import defaultdict
 from enum import Enum
 from subprocess import run
@@ -24,8 +25,34 @@ def get_module_name(file_path: Path | str) -> str:
         file_path = Path(file_path)
     return '_'.join(list(file_path.parts))[0:-3]
 
+
+def combine_module_ident(module_name: str, ident: str) -> str:
+    return f'_hsmd_{module_name}_hsmd_{ident}'
+
+
 def module_to_prolog_path(module_name: str) -> Path:
     return Path(module_name.replace('_', '/')).with_suffix('.pl')
+
+
+def decode_decl_name(name: str):
+    parts = name.split('_')
+    module = []
+    loc = []
+    ident = ''
+    open = False
+    for part in parts:
+        if part == 'hsmd' and not open:
+            open = True
+        elif part == 'hsmd' and open:
+            open = False
+        elif open:
+            module.append(part)
+        elif not open and part in string.digits:
+            loc.append(part)
+        else:
+            ident = part
+    return decode(ident)
+
 
 def adt(con: Term, args: list[Term]) -> Term:
     def unwrap(terms: list[Term]):
@@ -301,6 +328,7 @@ class Rule(BaseModel):
 
 class Decl(BaseModel):
     name: str
+    display_name: str
     type: str | None
     loc: Loc
 
@@ -350,12 +378,13 @@ class System:
     parser_bin = str(project_dir / "bin" / "haskell-parser.exe") if platform() == 'Windows' else str(
         project_dir / "bin" / "haskell-parser")
 
-    def __init__(self, base_dir: Path, file_id: int, hs_file: Path, ast, prolog_instance):
+    def __init__(self, base_dir: Path, file_id: int, hs_file: Path, module_name: str, ast, prolog_instance):
         self.ast: dict = ast
         self.base_dir: Path = base_dir
         self.file_id: int = file_id
         self.hs_file_path: Path = hs_file
         self.hs_path_rel: Path = hs_file.relative_to(base_dir)
+        self.current_module_name = '_'.join(module_name.split('.'))
         self.include_prelude = True
         self.prolog: Prolog = prolog_instance
         self.imports = [] if self.hs_file_path == self.base_dir / "Prelude.hs" else [
@@ -375,6 +404,7 @@ class System:
             base_dir=self.base_dir,
             file_id=self.file_id,
             hs_file=self.hs_file_path,
+            module_name=self.current_module_name,
             ast=self.ast,
             prolog_instance=self.prolog)
 
@@ -453,7 +483,8 @@ class System:
             all_rules = [self.rules[rid] for rid in all_rule_ids]
             all_decl_names = {r.meta.head.name for r in all_rules if r.meta.head.type == HeadType.TypeOf}
             all_decls = [Decl(
-                name=decode(decl_name),
+                name=decl_name,
+                display_name=decode_decl_name(decl_name),
                 loc=[rule.meta.loc for rule in self.rules if
                      rule.meta.head.name == decl_name and rule.meta.type == RuleType.Decl][0],
                 type=None) for decl_name in all_decl_names]
@@ -491,7 +522,7 @@ class System:
                             a.span(_t=rule.meta.src_text.value, klass='code type primary')
                             a.span(_t='to a different type')
                             a.span(_t=', because that the function')
-                            a.span(_t=rule.meta.head.name, klass='code term')
+                            a.span(_t=decode_decl_name(rule.meta.head.name), klass='code term')
                             a.span(_t="is used as")
                             a.span(_t=str(types[usages[rule.meta.head.name].meta.watch.value.value]), klass='code type')
                             score = types[usages[rule.meta.head.name].meta.watch.value.value].degree + 8
@@ -506,7 +537,7 @@ class System:
                             a.span(_t=rule.meta.src_text.value, klass='code term primary')
                             a.span(_t='to a different expression')
                             a.span(_t=', because that the function')
-                            a.span(_t=rule.meta.head.name, klass='code term')
+                            a.span(_t=decode_decl_name(rule.meta.head.name), klass='code term')
                             a.span(_t="is used as")
                             a.span(_t=str(types[usages[rule.meta.head.name].meta.watch.value.value]), klass='code type')
                             score = types[usages[rule.meta.head.name].meta.watch.value.value].degree
@@ -521,7 +552,8 @@ class System:
                 locs = [r.meta.loc for r in mcs_rules]
                 cause = Cause(
                     decls=list(
-                        map(lambda decl: Decl(name=decode(decl.name), loc=decl.loc, type=str(types[decl.name])),
+                        map(lambda decl: Decl(name=decode(decl.name), loc=decl.loc, type=str(types[decl.name]),
+                                              display_name=decl.display_name),
                             all_decls)),
                     suggestions=suggestions,
                     locs=locs,
@@ -583,7 +615,7 @@ class System:
 
         for head, body in clause_map.items():
             frees = Term.array(*self.free_vars.get(head, []))
-            self.prolog.add_clause(Clause(head=struct('type_of_' + head, T, frees), body=body))
+            self.prolog.add_clause(Clause(head=type_of(head, T, frees), body=body))
 
         # Imports
         if self.hs_file_path.stem != 'Prelude':
@@ -709,13 +741,36 @@ class System:
         return types
 
     def get_module(self, node) -> str:
+        # Handle some builtin names, mostly cons operator and error (bottom value):
+        if node['contents'][1]['tag'] == 'Ident' and node['contents'][1]['contents'][1] == 'error':
+            return 'Builtin'
         match node:
-            case {'tag': 'UnQual', 'contents': [ann, ident]}:
-                if ann['scope'].get('type') == 'GlobalSymbol':
-                    return ann['scope']['Symbol']['module'].replace('.', '_')
-
+            case {'tag': 'UnQual', 'contents': [{'scope': {"type": 'LocalValue', **_args}, **_keyargs}, _]}:
+                return self.current_module_name
+            case {'tag': 'UnQual',
+                  'contents': [{'scope': {"type": 'GlobalSymbol', "Symbol": symbol, **_args}, **_keyargs}, _]}:
+                return symbol['module'].replace('.', '_')
             case _:
                 raise NotImplementedError()
+
+    def get_qname(self, node, toplevel: bool) -> str:
+        match node:
+            case {'tag': 'Qual', 'contents': [ann, mod_name, name]}:
+                module_name = get_module_name(mod_name)
+                identifier = self.get_name(name, toplevel)
+                return combine_module_ident(module_name, identifier)
+
+            case {'tag': 'UnQual', 'contents': [ann, name]}:
+                module_name = self.get_module(node)
+                identifier = self.get_name(name, toplevel)
+                return combine_module_ident(module_name, identifier)
+
+            case {'tag': 'Special', 'contents': [ann, name]}:
+                match name['tag']:
+                    case 'Cons':
+                        return encode(':')
+                    case _:
+                        raise NotImplementedError()
 
     def get_name(self, node, toplevel: bool) -> str:
         match node:
@@ -743,17 +798,6 @@ class System:
                     print(node)
                     raise NotImplementedError
 
-            case {'tag': 'UnQual', 'contents': [ann, name]}:
-                # debug(name)
-                return self.get_name(name, toplevel)
-
-            case {'tag': 'Special', 'contents': [ann, name]}:
-                match name['tag']:
-                    case 'Cons':
-                        return encode(':')
-                    case _:
-                        raise NotImplementedError()
-
     def get_context(self, node_ast) -> list[tuple[str, str, dict]]:
         def get_assertion(assertion_):
             if assertion_['tag'] == 'ParenA':
@@ -765,7 +809,7 @@ class System:
             assert (type_con['tag'] == 'TyCon')
             assert (type_var['tag'] == 'TyVar')
 
-            class_name: str = self.get_name(type_con['contents'][1], True)
+            class_name: str = self.get_qname(type_con['contents'][1], True)
             var_name = type_var['contents'][1]['contents'][1]
             return class_name, var_name, assertion_['contents'][0]
 
@@ -827,7 +871,7 @@ class System:
                 def get_instance_head(ast_) -> tuple[str, str, dict | None]:
                     match ast_:
                         case {'tag': 'IHCon', 'contents': [ih_ann, qname]}:
-                            class_name_ = self.get_name(qname, True)
+                            class_name_ = self.get_qname(qname, True)
                             module_name = self.get_module(qname)
                             return class_name_, module_name, None
                         case {'tag': 'IHInfix', 'contents': [ih_ann, ih_type, qname]}:
@@ -840,8 +884,8 @@ class System:
 
                 if instRule['tag'] == 'IRule':
                     [_, _, context, ins_head] = instRule['contents']
-                    class_name, module_name, type_ast = get_instance_head(ins_head)
-                    self.check_node(type_ast, T, Head.instance_of(class_name, module_name, self.get_instance_id()),
+                    class_name_, module_name, type_ast = get_instance_head(ins_head)
+                    self.check_node(type_ast, T, Head.instance_of(class_name_, module_name, self.get_instance_id()),
                                     toplevel=True)
 
                 elif instRule['tag'] == 'IParen':
@@ -857,17 +901,6 @@ class System:
                     module=str(self.hs_file_path),
                     super_classes=[cls[0] for cls in super_classes]))
 
-                # for cls, var_name, assertion_loc in super_classes:
-                #     self.add_rule(
-                #         require_class(cls, T, wildcard),
-                #         Head.instance_of(class_name),
-                #         assertion_loc,
-                #         nothing,
-                #         RuleType.TypeClass
-                #     )
-
-                # self.super_classes[class_name] = [cls[0] for cls in super_classes]
-
                 assert (len(vs_names) == 1)
                 var_name = vs_names[0]
                 for decl in decls:
@@ -876,7 +909,7 @@ class System:
                     names = type_decl['contents'][1]
 
                     for name in names:
-                        name = self.get_name(name, toplevel)
+                        name = combine_module_ident(self.current_module_name, self.get_name(name, toplevel))
                         name_var = self.bind(name)
                         self.call_graph.add_closure('module', name, CallGraph.FREE)
                         self.add_ambient_rule(var('_' + var_name) == name_var, Head.type_of(name))
@@ -916,7 +949,7 @@ class System:
                     decl = con_decl[3]
                     if decl['tag'] == 'ConDecl':
                         [ann, name, types] = decl['contents']
-                        con_name = self.get_name(name, toplevel=True)
+                        con_name = combine_module_ident(self.current_module_name, self.get_name(name, toplevel=True))
                         self.call_graph.add_closure('module', con_name, CallGraph.FREE)
                         con_var = self.bind(con_name)
                         arg_vars = self.bind_n(len(types), con_name)
@@ -931,7 +964,7 @@ class System:
             case {'tag': 'PatBind', 'contents': [ann, pat, rhs, wheres]}:
                 match pat:
                     case {'tag': 'PVar', 'contents': [ann, name]}:
-                        var_name = self.get_name(name, toplevel)
+                        var_name = combine_module_ident(self.current_module_name, self.get_name(name, toplevel))
                         var_pat = self.bind(var_name)
                         self.call_graph.add_closure(head.name, var_name, CallGraph.FREE)
                         self.add_rule(T == var_pat, Head.type_of(var_name), ann, var_pat, rule_type=RuleType.Decl)
@@ -944,7 +977,7 @@ class System:
 
             case {'tag': 'FunBind', 'contents': [ann, matches]}:
                 [ann, f_name, f_args, _, _] = matches[0]['contents']
-                fun_name = self.get_name(f_name, toplevel)
+                fun_name = combine_module_ident(self.current_module_name, self.get_name(f_name, toplevel))
                 var_args = self.bind_n(len(f_args), fun_name)
                 var_rhs = self.bind(fun_name)
                 var_fun = self.bind(fun_name)
@@ -963,7 +996,7 @@ class System:
 
             case {'tag': 'TypeSig', 'contents': [ann, names, sig]}:
                 for name in names:
-                    fun_name = self.get_name(name, toplevel)
+                    fun_name = combine_module_ident(self.current_module_name, self.get_name(name, toplevel))
                     fun_var = self.bind(fun_name)
                     self.add_rule(fun_var == T, Head.type_of(fun_name), name['contents'][0], watch=fun_var,
                                   rule_type=RuleType.Decl)
@@ -1004,7 +1037,7 @@ class System:
                 self.check_node({'tag': 'Var', 'contents': [ann, qname]}, term, head)
 
             case {'tag': 'Var', 'contents': [ann, qname]}:
-                var_name = self.get_name(qname, toplevel)
+                var_name = self.get_qname(qname, toplevel)
                 new_var = self.bind(head.name)
                 self.call_graph.add_call(head.name, var_name, new_var.value)
                 self.add_rule(new_var == term,
@@ -1232,7 +1265,7 @@ class System:
 
             # Patterns
             case {'tag': 'PVar', 'contents': [ann, name]}:
-                p_name = self.get_name(name, toplevel)
+                p_name = combine_module_ident(self.current_module_name, self.get_name(name, toplevel))
                 new_var = self.bind(head.name)
                 self.add_ambient_rule(new_var == term, head)
                 self.call_graph.add_closure(head.name, p_name, CallGraph.BOUND)
@@ -1250,8 +1283,8 @@ class System:
             case {'tag': "PParen", "contents": [ann, p]}:
                 self.check_node(p, term, head)
 
-            case {'tag': 'PApp', 'contents': [ann, pname, p_args]}:
-                fun_name = self.get_name(pname, toplevel)
+            case {'tag': 'PApp', 'contents': [ann, qname, p_args]}:
+                fun_name = self.get_qname(qname, toplevel)
                 fun_var = self.bind(head.name)
                 arg_vars = self.bind_n(len(p_args), head.name)
                 self.add_rule(fun_var == fun_of(*arg_vars, term), head, ann, watch=term,
@@ -1266,9 +1299,9 @@ class System:
                     'contents': [ann, op, [p1, p2]]
                 }, term, head)
 
-            case {'tag': 'QVarOp', 'contents': [ann, name]}:
+            case {'tag': 'QVarOp', 'contents': [ann, qname]}:
                 v = self.bind(head.name)
-                self.call_graph.add_call(head.name, self.get_name(name, toplevel), v.value)
+                self.call_graph.add_call(head.name, self.get_qname(qname, toplevel), v.value)
                 self.add_rule(v == term, head, ann, watch=term, rule_type=RuleType.Var)
 
             case {'tag': 'Special', 'contents': [ann, special_con]}:
@@ -1300,14 +1333,13 @@ if __name__ == "__main__":
     result = run(f'{parser_bin} {base_dir}', shell=True, check=True, capture_output=True)
     parsed_data = ujson.loads(result.stdout)
 
-    asts = [c['ast'] for c in parsed_data['contents']]
-    files = [c['file'] for c in parsed_data['contents']]
-    number_of_files = len(files)
-
     call_graphs = {}
     free_vars = {}
 
-    for ast, file, file_id in zip(asts, files, range(number_of_files)):
+    for file_id, parse_result in enumerate(parsed_data['contents']):
+        ast = parse_result['ast']
+        file = parse_result['file']
+        module_name = parse_result['moduleName']
         if file == to_check_file:
             continue
         else:
@@ -1318,15 +1350,18 @@ if __name__ == "__main__":
                     ast=ast,
                     file_id=file_id,
                     hs_file=base_dir / file,
+                    module_name=module_name,
                     prolog_instance=prolog
                 )
                 system.marshal()
                 system.generate_only()
-                call_graphs[system.file_id] = system.call_graph.graph
-                free_vars[system.file_id] = system.free_vars
+                call_graphs.update(system.call_graph.graph)
+                free_vars.update(system.free_vars)
 
-
-    for ast, file, file_id in zip(asts, files, range(number_of_files)):
+    for file_id, parse_result in enumerate(parsed_data['contents']):
+        ast = parse_result['ast']
+        file = parse_result['file']
+        module_name = parse_result['moduleName']
         if file == to_check_file:
             prolog_file = file[:-3] + '.pl'
             with Prolog(interface=PlInterface.File, file=base_dir / prolog_file) as prolog:
@@ -1335,20 +1370,12 @@ if __name__ == "__main__":
                     ast=ast,
                     file_id=file_id,
                     hs_file=base_dir / file,
+                    module_name=module_name,
                     prolog_instance=prolog
                 )
                 system.marshal()
-                for system_import in system.imports:
-                    for fid, file in enumerate(files):
-                        imporetd_pl_file = Path(system_import).relative_to(base_dir)
-                        if imporetd_pl_file == Path(file).with_suffix('.pl'):
-                            system.call_graph.graph.update(call_graphs[fid])
-                            system.free_vars.update(free_vars[fid])
 
-                system.generate_goals()
-                for goal in system.prolog.queries:
-                    print(goal.__str__() + ',')
-                print('true.')
-                diagnoses = system.type_check()
-                system.call_graph.show()
-                print('[' + ','.join([d.json() for d in diagnoses]) + ']')
+                system.call_graph.graph.update(call_graphs)
+                system.free_vars.update(free_vars)
+                r = system.type_check()
+                print(r)

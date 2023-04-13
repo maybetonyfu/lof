@@ -43,7 +43,7 @@ const ResultTypes = () => {
             {decls.map(decl => (
                 <Text key={decl.name} my={1} px={3} py={0.5} borderRadius={'lg'} bg={'white'}
                       fontFamily={'JetBrains Mono'}>
-                    {decl.name} :: {decl.type}
+                    {decl.display_name} :: {decl.type}
                 </Text>))}
 
         </Flex>)
@@ -59,7 +59,7 @@ const Explanation = () => {
         return null
     }
     let currentError = errors[activeErrorId]
-    let decls = currentError.decls.map(d => d.name)
+    let decls = currentError.decls.map(d => d.display_name)
 
     return (<Text as={'span'}>The error occurs because the{' '}
             {decls.length === 1 ? 'expression' : 'expressions'}{' '}

@@ -4,7 +4,6 @@ from pathlib import Path
 from enum import Enum
 from pydantic import BaseModel
 
-
 class Kind(Enum):
     Atom = "Atom"
     Var = "Var"

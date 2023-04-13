@@ -1,15 +1,13 @@
 class A a where
     f :: a -> a
 
-instance A Int where
-    f x = x + 3
+instance A Int
 
-instance A Float where
-    f x = x + 3
+instance A Float
 
 class (A a) => B a where
     g :: a -> a
 
-instance B Int where
+instance B Int
 
 x = g 3

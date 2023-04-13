@@ -210,6 +210,7 @@ class Type:
             case {'functor': 'require', 'args': [class_pl_list]}:
                 class_list = prolog_list_to_list(class_pl_list)
                 classes = {cls[len('class_'):] for cls in class_list[:-1]}
+                classes = {c.split('_')[-1] for c in classes}
                 letter = self.from_json(class_list[-1])
                 self.type_classes[letter] = self.type_classes[letter].union(classes)
                 return letter
@@ -576,6 +577,7 @@ class System:
         self.generate_typing_clauses({r.rid for r in self.rules})
         self.generate_instance_clauses({r.rid for r in self.rules})
         self.prolog.generate_file()
+        self.generate_goals()
 
     def solve(self, rules: set[int]) -> bool | list:
         self.prolog.reset()
@@ -589,16 +591,17 @@ class System:
 
     def generate_type_classes(self):
         for tc in self.classes:
+            class_full_name = combine_module_ident(tc.module, tc.name)
             super_classes = tc.super_classes
             super_class_rules = [instance_of(super_class, T) for super_class in super_classes]
-            self.prolog.add_multifile(f'instance_of_{tc.name}/2')
+            self.prolog.add_multifile(f'instance_of_{class_full_name}/2')
             self.prolog.add_clause(
                 Clause(head=require_class(tc.name, T),
-                       body=[instance_of(tc.name, T)] + super_class_rules
+                       body=[instance_of(class_full_name, T)] + super_class_rules
                        )
             )
             self.prolog.add_clause(
-                Clause(head=instance_of(tc.name, T), body=require(tc.name))
+                Clause(head=instance_of(class_full_name, T), body=require(class_full_name))
             )
 
     def generate_typing_clauses(self, rules: set[int]):
@@ -898,7 +901,7 @@ class System:
                 super_classes: list[tuple[str, str, dict]] = [] if context is None else self.get_context(context)
                 self.classes.append(TypeClass(
                     name=class_name,
-                    module=str(self.hs_file_path),
+                    module=self.current_module_name,
                     super_classes=[cls[0] for cls in super_classes]))
 
                 assert (len(vs_names) == 1)
@@ -1374,8 +1377,11 @@ if __name__ == "__main__":
                     prolog_instance=prolog
                 )
                 system.marshal()
-
                 system.call_graph.graph.update(call_graphs)
                 system.free_vars.update(free_vars)
+                system.generate_only()
+                for query in system.prolog.queries:
+                    print(query.__str__() + ',')
+                print('true.')
                 r = system.type_check()
                 print(r)

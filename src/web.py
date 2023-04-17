@@ -1,3 +1,4 @@
+from itertools import chain
 from platform import platform
 from subprocess import run
 
@@ -6,7 +7,7 @@ from fastapi import FastAPI, Body
 from fastapi.responses import HTMLResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pathlib import Path
-from src.haskell import System, Error, Rule, Diagnosis
+from src.haskell import System, Error, Rule, Diagnosis, gather_type_synonym
 from pydantic import BaseModel
 from src.prolog import Prolog, PlInterface
 import shutil
@@ -37,6 +38,7 @@ async def typecheck(file_path: str, user_id: str) -> list[Diagnosis]:
 
     result = run(f'{parser_bin} {base_dir}', shell=True, check=True, capture_output=True)
     parsed_data = ujson.loads(result.stdout)
+    synonyms = list(chain(*[gather_type_synonym(r['ast']) for r in parsed_data['contents']]))
 
     call_graphs = {}
     free_vars = {}
@@ -56,7 +58,8 @@ async def typecheck(file_path: str, user_id: str) -> list[Diagnosis]:
                     hs_file=base_dir / file_,
                     prolog_instance=prolog,
                     base_dir=base_dir,
-                    module_name=module_name
+                    module_name=module_name,
+                    synonyms=synonyms,
                 )
                 system.marshal()
                 system.generate_only()
@@ -76,7 +79,8 @@ async def typecheck(file_path: str, user_id: str) -> list[Diagnosis]:
                     file_id=file_id,
                     hs_file=base_dir / file_,
                     prolog_instance=prolog,
-                    module_name=module_name
+                    module_name=module_name,
+                    synonyms=synonyms,
                 )
 
                 system.marshal()

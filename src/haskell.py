@@ -1,6 +1,7 @@
 import string
 from collections import defaultdict
 from enum import Enum
+from itertools import chain
 from subprocess import run
 import ujson
 from typing import Any, TypeAlias, Iterator
@@ -8,7 +9,7 @@ from airium import Airium
 from src.encoder import encode, decode
 from string import ascii_lowercase
 from src.prolog import Prolog, Term, atom, var, struct, Clause, PlInterface, cons, nil, Kind, wildcard, \
-    prolog_list_to_list, struct_extern
+    prolog_list_to_list, struct_extern, unify
 from src.maybe import Maybe, nothing, just
 from src.marco import Marco, Error
 from pydantic import BaseModel
@@ -18,6 +19,28 @@ from platform import platform
 Point: TypeAlias = tuple[int, int]
 Span: TypeAlias = tuple[Point, Point]
 Loc: TypeAlias = tuple[str, Span]
+
+
+def gather_type_synonym(module_ast: dict) -> [str]:
+    decls = module_ast['contents'][4]
+    type_decls = [d for d in decls if d['tag'] == 'TypeDecl']
+    type_synonyms = []
+
+    def get_declhead_name(decl_head: dict) -> str:
+        match decl_head:
+            case {'tag': 'DHead', 'contents': [_, name]}:
+                return name['contents'][1]
+            case {'tag': 'DHInfix', 'contents': [_, name, _]}:
+                return name['contents'][1]
+            case {'tag': 'DHParen', 'contents': [_, decl_head]}:
+                return get_declhead_name(decl_head)
+            case {'tag': 'DHApp', 'contents': [_, decl_head, _]}:
+                return get_declhead_name(decl_head)
+
+    for td in type_decls:
+        td_head = td['contents'][1]
+        type_synonyms.append(get_declhead_name(td_head))
+    return type_synonyms
 
 
 def get_module_name(file_path: Path | str) -> str:
@@ -177,7 +200,7 @@ class Type:
 
             case {'functor': 'adt', 'args': [{'functor': '[|]', 'args': ['tuple', x]}]}:
                 args = prolog_list_to_list(x)
-                return '(' + ', '.join([self.from_json(arg) for arg in args]) + ')'
+                return '(' + ', '.join([self.from_json(arg) for arg in args[:-1]]) + ')'
 
             case {'functor': 'adt', 'args': [{'functor': '[|]', 'args': ['function', x]}]}:
                 args = prolog_list_to_list(x)
@@ -283,6 +306,7 @@ class RuleType(Enum):
 class HeadType(Enum):
     TypeOf = "TypeOf"
     InstanceOf = "InstanceOf"
+    SynonymOf = "SynonymOf"
 
 
 class Head(BaseModel):
@@ -290,6 +314,7 @@ class Head(BaseModel):
     type: HeadType
     instance_id: None | int
     from_module: str | None
+    synonym_vars: list[str]
 
     @classmethod
     def type_of(cls, variable_name: str):
@@ -297,7 +322,17 @@ class Head(BaseModel):
             name=variable_name,
             type=HeadType.TypeOf,
             instance_id=None,
-            from_module=None)
+            from_module=None,
+            synonym_vars=[])
+
+    @classmethod
+    def synonym_of(cls, variable_name: str, synonym_vars: list[str]):
+        return cls(
+            name=variable_name,
+            type=HeadType.SynonymOf,
+            instance_id=None,
+            from_module=None,
+            synonym_vars=synonym_vars)
 
     @classmethod
     def instance_of(cls, inst_name: str, from_module: str, instance_id: int | None = None):
@@ -305,7 +340,8 @@ class Head(BaseModel):
             name=inst_name,
             type=HeadType.InstanceOf,
             instance_id=instance_id,
-            from_module=from_module)
+            from_module=from_module,
+            synonym_vars=[])
 
 
 class RuleMeta(BaseModel):
@@ -379,7 +415,8 @@ class System:
     parser_bin = str(project_dir / "bin" / "haskell-parser.exe") if platform() == 'Windows' else str(
         project_dir / "bin" / "haskell-parser")
 
-    def __init__(self, base_dir: Path, file_id: int, hs_file: Path, module_name: str, ast, prolog_instance):
+    def __init__(self, base_dir: Path, file_id: int, hs_file: Path, module_name: str, ast, prolog_instance, synonyms: list[str]):
+        self.synonyms : list[str] = synonyms
         self.ast: dict = ast
         self.base_dir: Path = base_dir
         self.file_id: int = file_id
@@ -407,7 +444,8 @@ class System:
             hs_file=self.hs_file_path,
             module_name=self.current_module_name,
             ast=self.ast,
-            prolog_instance=self.prolog)
+            prolog_instance=self.prolog,
+            synonyms=self.synonyms)
 
     def fresh(self) -> Term:
         vid = self.variable_counter
@@ -575,6 +613,7 @@ class System:
         self.prolog.reset()
         self.generate_type_classes()
         self.generate_typing_clauses({r.rid for r in self.rules})
+        self.generate_type_synonym_clauses({r.rid for r in self.rules})
         self.generate_instance_clauses({r.rid for r in self.rules})
         self.prolog.generate_file()
         self.generate_goals()
@@ -583,6 +622,7 @@ class System:
         self.prolog.reset()
         self.generate_type_classes()
         self.generate_typing_clauses(rules)
+        self.generate_type_synonym_clauses({r.rid for r in self.rules})
         self.generate_instance_clauses(rules)
         self.prolog.generate_file()
         self.generate_goals()
@@ -603,6 +643,20 @@ class System:
             self.prolog.add_clause(
                 Clause(head=instance_of(class_full_name, T), body=require(class_full_name))
             )
+
+    def generate_type_synonym_clauses(self, rules: set[int]):
+        current_file_name = str(self.hs_file_path.relative_to(self.base_dir))
+        active_rules = [r for r in self.rules if (r.rid in rules)
+                        or r.is_ambient()
+                        or r.meta.loc[0] != current_file_name]
+        all_synonym_rules = [r for r in active_rules if r.meta.head.type == HeadType.SynonymOf]
+        synonyms = {r.meta.head.name for r in all_synonym_rules}
+        for synonym in synonyms:
+            synonym_rules = [r for r in all_synonym_rules if r.meta.head.name == synonym]
+            synonym_vars = [var(f'TypeVar_{v}' ) for v in synonym_rules[0].meta.head.synonym_vars]
+            synonym_head = struct('synonym_of_' + synonym, T, Term.array(*synonym_vars))
+            self.prolog.add_clause(
+                Clause(head=synonym_head, body=[r.body for r in synonym_rules]))
 
     def generate_typing_clauses(self, rules: set[int]):
         current_file_name = str(self.hs_file_path.relative_to(self.base_dir))
@@ -843,6 +897,30 @@ class System:
             case _:
                 raise NotImplementedError()
 
+    def unwrap_ty_app(self, ty: dict):
+        match ty:
+            case {'tag': 'TyApp', 'contents': [ann, t1, t2]}:
+                return [*self.unwrap_ty_app(t1), t2]
+            case _:
+                return [ty]
+
+    def type_con_is_synonym(self, type_con: dict) -> Maybe[str]:
+        if type_con.get('tag') == 'TyCon':
+            qname = type_con['contents'][1]
+            match qname:
+                case {'tag': 'UnQual', 'contents': [_, {'tag': _, 'contents': [_, name]}]}:
+                    if name in self.synonyms:
+                        return just(name)
+                    else:
+                        return nothing
+                case _:
+                    return nothing
+        elif type_con.get('tag') == 'TyApp':
+            head = type_con['contents'][1]
+            return self.type_con_is_synonym(head)
+        else:
+            return nothing
+
     def check_node(self, node, term: Term, head: Head, toplevel: bool = False):
         match node:
             case {'tag': 'LanguagePragma', 'contents': [ann, pragmas]}:
@@ -870,6 +948,17 @@ class System:
                 for decl in decls:
                     self.check_node(decl, term, head, toplevel=True)
 
+            case {'tag': 'TypeDecl', 'contents': [ann, decl_head, type_decl_rhs]}:
+                heads = self.get_head_name(decl_head, [])
+                type_syn_name: str = heads[0]
+                v_rhs = self.bind(type_syn_name)
+                syn_head = Head.synonym_of(type_syn_name, heads[1:])
+                self.check_node(type_decl_rhs, v_rhs, syn_head, toplevel=True)
+                self.add_ambient_rule(
+                    unify(T, v_rhs),
+                    syn_head
+                )
+
             case {'tag': 'InstDecl', 'contents': [ann, _, instRule, instDecl]}:
                 def get_instance_head(ast_) -> tuple[str, str, dict | None]:
                     match ast_:
@@ -887,9 +976,24 @@ class System:
 
                 if instRule['tag'] == 'IRule':
                     [_, _, context, ins_head] = instRule['contents']
+                    super_classes: list[tuple[str, str, dict]] = [] if context is None else self.get_context(context)
                     class_name_, module_name, type_ast = get_instance_head(ins_head)
-                    self.check_node(type_ast, T, Head.instance_of(class_name_, module_name, self.get_instance_id()),
+                    rule_head = Head.instance_of(class_name_, module_name, self.get_instance_id())
+                    self.check_node(type_ast, T, rule_head,
                                     toplevel=True)
+                    for super_class in super_classes:
+                        [super_class_name, super_class_var_name, super_class_loc] = super_class
+                        super_class_name = super_class_name.split('_')[-1]
+
+                        super_class_var = var(f"TypeVar_{super_class_var_name}")
+                        self.add_ambient_rule(
+                            struct('nonvar', super_class_var),
+                            rule_head
+                        )
+                        self.add_ambient_rule(
+                            require_class(super_class_name, super_class_var, wildcard),
+                            rule_head,
+                        )
 
                 elif instRule['tag'] == 'IParen':
                     self.check_node({'tag': 'InstDecl', 'contents': [ann, None, instRule['contents'][1], instDecl]},
@@ -911,20 +1015,20 @@ class System:
                     type_decl = decl['contents'][1]
                     names = type_decl['contents'][1]
 
+                    self.check_node(type_decl, wildcard, Head.type_of('module'), toplevel)
                     for name in names:
                         name = combine_module_ident(self.current_module_name, self.get_name(name, toplevel))
                         name_var = self.bind(name)
                         self.call_graph.add_closure('module', name, CallGraph.FREE)
-                        self.add_ambient_rule(var('_' + var_name) == name_var, Head.type_of(name))
+                        self.add_ambient_rule(var('TypeVar_' + var_name) == name_var, Head.type_of(name))
                         self.add_ambient_rule(
-                            require_class(class_name, var('_' + var_name), wildcard),
+                            require_class(class_name, var('TypeVar_' + var_name), wildcard),
                             Head.type_of(name))
-                    self.check_node(type_decl, wildcard, Head.type_of('module'), toplevel)
 
             case {'tag': "DataDecl", 'contents': [ann, _, _, head, con_decls, derived_classes]}:
                 [name, *vs_names] = self.get_head_name(head, [])
                 name = name[0].lower() + name[1:]
-                vs = [var('_' + v) for v in vs_names]
+                vs = [var('TypeVar_' + v) for v in vs_names]
                 adt_var = atom(name) if len(vs) == 0 else adt(atom(name), vs)
 
                 def get_first_instance_constant(ast):
@@ -1194,41 +1298,45 @@ class System:
 
             # Types
             case {'tag': 'TyCon', 'contents': [ann, qname]}:
-                if qname['tag'] == 'Special':
-                    match qname['contents'][1]:
-                        case {'tag': 'UnitCon', 'contents': _}:
-                            self.add_rule(term == t_unit, head, ann, watch=term, rule_type=RuleType.Type)
-                        case {'tag': 'ListCon', 'contents': _}:
-                            self.add_rule(term == atom('list'), head, ann, watch=term, rule_type=RuleType.Type)
-                        case _:
-                            raise Exception("Unknown special type: " + qname['contents'][1])
+                if (is_synonym := self.type_con_is_synonym(node)) and is_synonym.is_just:
+                    self.add_ambient_rule(
+                        struct('synonym_of_' + is_synonym.value, term, wildcard),
+                        head
+                    )
                 else:
-                    type_literal: str = qname['contents'][1]['contents'][1]
-                    type_name: str = type_literal[0].lower() + type_literal[1:]
-                    self.add_ambient_rule(term == atom(type_name), head)
+
+                    if qname['tag'] == 'Special':
+                        match qname['contents'][1]:
+                            case {'tag': 'UnitCon', 'contents': _}:
+                                self.add_rule(term == t_unit, head, ann, watch=term, rule_type=RuleType.Type)
+                            case {'tag': 'ListCon', 'contents': _}:
+                                self.add_rule(term == atom('list'), head, ann, watch=term, rule_type=RuleType.Type)
+                            case _:
+                                raise Exception("Unknown special type: " + qname['contents'][1])
+                    else:
+                        type_literal: str = qname['contents'][1]['contents'][1]
+                        type_name: str = type_literal[0].lower() + type_literal[1:]
+                        self.add_ambient_rule(term == atom(type_name), head)
 
             case {'tag': 'TyApp', 'contents': [ann, t1, t2]}:
-                v1: Term
-                v2: Term
-                [v1, v2] = self.bind_n(2, head.name)
-                self.add_rule(term == adt(v1, [v2]), head, ann, watch=term, rule_type=RuleType.Type)
-                self.check_node(t2, v2, head)
-                self.check_node(t1, v1, head)
-                # match t1:
-                #     case {'tag': 'TyCon', 'contents': [ann, qname]}:
-                #         if qname['tag'] == 'UnQual':
-                #             type_literal = qname['contents'][1]['contents'][1]
-                #             type_name = type_literal[0].lower() + type_literal[1:]
-                #             self.add_rule(term == atom(type_name), head, ann, watch=term, rule_type=RuleType.Type)
-                #         elif qname['tag'] == 'Special':
-                #             match qname['contents'][1]:
-                #                 case {'tag': 'UnitCon', 'contents': _}:
-                #                     self.add_rule(term == t_unit, head, ann, watch=term, rule_type=RuleType.Type)
-                #                 case {'tag': 'ListCon', 'contents': _}:
-                #                     self.add_rule(term == atom('list'), head, ann, watch=term, rule_type=RuleType.Type)
-                #                 case _:
-                #                     raise Exception("Unknown special type: " + qname['contents'][1])
-                #     case _: self.check_node(t1, v1, head)
+                is_synonym: Maybe[str] = self.type_con_is_synonym(t1)
+                if is_synonym.is_just:
+                    items = self.unwrap_ty_app(node)[1:]
+                    print(ujson.dumps(items))
+                    vs = self.bind_n(len(items), head.name)
+                    self.add_ambient_rule(
+                        struct('synonym_of_' + is_synonym.value, term, Term.array(*vs)),
+                        head
+                    )
+                    for type_part, v in zip(items, vs):
+                        self.check_node(type_part, v, head)
+                else:
+                    v1: Term
+                    v2: Term
+                    [v1, v2] = self.bind_n(2, head.name)
+                    self.add_rule(term == adt(v1, [v2]), head, ann, watch=term, rule_type=RuleType.Type)
+                    self.check_node(t1, v1, head)
+                    self.check_node(t2, v2, head)
 
             case {'tag': 'TyFun', 'contents': [ann, t1, t2]}:
                 [var1, var2] = self.bind_n(2, head.name)
@@ -1249,7 +1357,7 @@ class System:
 
             case {'tag': 'TyVar', 'contents': [ann, name]}:
                 var_name = name['contents'][1]
-                self.add_rule(term == var('_' + var_name), head, ann, watch=term, rule_type=RuleType.Type)
+                self.add_rule(term == var('TypeVar_' + var_name), head, ann, watch=term, rule_type=RuleType.Type)
 
             case {'tag': 'TyParen', 'contents': [_, ty]}:
                 self.check_node(ty, term, head)
@@ -1335,17 +1443,36 @@ if __name__ == "__main__":
         project_dir / "bin" / "haskell-parser")
     result = run(f'{parser_bin} {base_dir}', shell=True, check=True, capture_output=True)
     parsed_data = ujson.loads(result.stdout)
-
+    synonyms = list(chain(*[gather_type_synonym(r['ast']) for r in parsed_data['contents']]))
     call_graphs = {}
     free_vars = {}
+    type_alias = {}
+
+    for file_id, parse_result in enumerate(parsed_data['contents']):
+        ast = parse_result['ast']
+        file = parse_result['file']
+        module_name = parse_result['moduleName']
+        prolog_file = file[:-3] + '.pl'
+        with Prolog(interface=PlInterface.File, file=base_dir / prolog_file) as prolog:
+            system = System(
+                base_dir=base_dir,
+                synonyms=synonyms,
+                ast=ast,
+                file_id=file_id,
+                hs_file=base_dir / file,
+                module_name=module_name,
+                prolog_instance=prolog
+            )
+            system.marshal()
+            system.generate_only()
+            call_graphs.update(system.call_graph.graph)
+            free_vars.update(system.free_vars)
 
     for file_id, parse_result in enumerate(parsed_data['contents']):
         ast = parse_result['ast']
         file = parse_result['file']
         module_name = parse_result['moduleName']
         if file == to_check_file:
-            continue
-        else:
             prolog_file = file[:-3] + '.pl'
             with Prolog(interface=PlInterface.File, file=base_dir / prolog_file) as prolog:
                 system = System(
@@ -1354,27 +1481,8 @@ if __name__ == "__main__":
                     file_id=file_id,
                     hs_file=base_dir / file,
                     module_name=module_name,
-                    prolog_instance=prolog
-                )
-                system.marshal()
-                system.generate_only()
-                call_graphs.update(system.call_graph.graph)
-                free_vars.update(system.free_vars)
-
-    for file_id, parse_result in enumerate(parsed_data['contents']):
-        ast = parse_result['ast']
-        file = parse_result['file']
-        module_name = parse_result['moduleName']
-        if file == to_check_file:
-            prolog_file = file[:-3] + '.pl'
-            with Prolog(interface=PlInterface.File, file=base_dir / prolog_file) as prolog:
-                system = System(
-                    base_dir=base_dir,
-                    ast=ast,
-                    file_id=file_id,
-                    hs_file=base_dir / file,
-                    module_name=module_name,
-                    prolog_instance=prolog
+                    prolog_instance=prolog,
+                    synonyms=synonyms
                 )
                 system.marshal()
                 system.call_graph.graph.update(call_graphs)

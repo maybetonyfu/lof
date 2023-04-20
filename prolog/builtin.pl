@@ -1,6 +1,5 @@
 :- module(hs_builtin, [type_of_SYMcn/2,type_of__hsmd_Builtin_hsmd_error/2,member1/2]).
 
-
 type_of_SYMcn(T, _) :-
   '='(FreshB22, T),
   '='(FreshB23, _a),

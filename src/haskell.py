@@ -62,15 +62,15 @@ def decode_decl_name(name: str):
     module = []
     loc = []
     ident = ''
-    open = False
+    parsing_module_name = False
     for part in parts:
-        if part == 'hsmd' and not open:
-            open = True
-        elif part == 'hsmd' and open:
-            open = False
-        elif open:
+        if part == 'hsmd' and not parsing_module_name:
+            parsing_module_name = True
+        elif part == 'hsmd' and parsing_module_name:
+            parsing_module_name = False
+        elif parsing_module_name:
             module.append(part)
-        elif not open and part in string.digits:
+        elif not parsing_module_name and part in string.digits:
             loc.append(part)
         else:
             ident = part
@@ -418,8 +418,9 @@ class System:
     parser_bin = str(project_dir / "bin" / "haskell-parser.exe") if platform() == 'Windows' else str(
         project_dir / "bin" / "haskell-parser")
 
-    def __init__(self, base_dir: Path, file_id: int, hs_file: Path, module_name: str, ast, prolog_instance, synonyms: list[str]):
-        self.synonyms : list[str] = synonyms
+    def __init__(self, base_dir: Path, file_id: int, hs_file: Path, module_name: str, ast, prolog_instance,
+                 synonyms: list[str]):
+        self.synonyms: list[str] = synonyms
         self.ast: dict = ast
         self.base_dir: Path = base_dir
         self.file_id: int = file_id
@@ -643,7 +644,7 @@ class System:
             self.prolog.add_multifile(f'instance_of_{class_full_name}/2')
             self.prolog.add_clause(
                 Clause(head=require_class(tc.name, T),
-                       body=[ instance_of(class_full_name, T)] + super_class_rules
+                       body=[instance_of(class_full_name, T)] + super_class_rules
                        )
             )
             self.prolog.add_clause(
@@ -659,7 +660,7 @@ class System:
         synonyms = {r.meta.head.name for r in all_synonym_rules}
         for synonym in synonyms:
             synonym_rules = [r for r in all_synonym_rules if r.meta.head.name == synonym]
-            synonym_vars = [var(f'TypeVar_{v}' ) for v in synonym_rules[0].meta.head.synonym_vars]
+            synonym_vars = [var(f'TypeVar_{v}') for v in synonym_rules[0].meta.head.synonym_vars]
             synonym_head = struct('synonym_of_' + synonym, T, Term.array(*synonym_vars))
             self.prolog.add_clause(
                 Clause(head=synonym_head, body=[r.body for r in synonym_rules]))
@@ -774,7 +775,7 @@ class System:
 
     def marshal(self):
         self.file_content = self.hs_file_path.read_text()
-        self.check_node(self.ast, atom('true'), Head.type_of('module'))
+        self.check_node(self.ast, atom('true'), Head.type_of('module'), [])
 
     def type_check(self) -> list[Diagnosis]:
         self.tc_errors = []
@@ -927,7 +928,7 @@ class System:
         else:
             return nothing
 
-    def check_node(self, node, term: Term, head: Head, toplevel: bool = False):
+    def check_node(self, node, term: Term, head: Head, parents: list[int], toplevel: bool = False):
         match node:
             case {'tag': 'LanguagePragma', 'contents': [ann, pragmas]}:
                 for pragma in pragmas:
@@ -940,7 +941,7 @@ class System:
 
             case {'tag': 'Module', 'contents': [ann, _, pragmas, imports, decls]}:
                 for pragma in pragmas:
-                    self.check_node(pragma, term, head, toplevel=True)
+                    self.check_node(pragma, term, head, parents, toplevel=True)
                 for im in imports:
                     module_name: str = im['importModule'][1]
                     prolog_file_ = '/'.join(module_name.split('.')) + '.pl'
@@ -952,14 +953,14 @@ class System:
                     self.add_ambient_rule(term, head)
 
                 for decl in decls:
-                    self.check_node(decl, term, head, toplevel=True)
+                    self.check_node(decl, term, head, parents, toplevel=True)
 
             case {'tag': 'TypeDecl', 'contents': [ann, decl_head, type_decl_rhs]}:
                 heads = self.get_head_name(decl_head, [])
                 type_syn_name: str = heads[0]
                 v_rhs = self.bind(type_syn_name)
                 syn_head = Head.synonym_of(type_syn_name, heads[1:])
-                self.check_node(type_decl_rhs, v_rhs, syn_head, toplevel=True)
+                self.check_node(type_decl_rhs, v_rhs, syn_head, parents, toplevel=True)
                 self.add_ambient_rule(
                     unify(T, v_rhs),
                     syn_head
@@ -985,7 +986,7 @@ class System:
                     super_classes: list[tuple[str, str, dict]] = [] if context is None else self.get_context(context)
                     class_name_, module_name, type_ast = get_instance_head(ins_head)
                     rule_head = Head.instance_of(class_name_, module_name, self.get_instance_id())
-                    self.check_node(type_ast, T, rule_head, toplevel=True)
+                    self.check_node(type_ast, T, rule_head, parents, toplevel=True)
                     for super_class in super_classes:
                         [super_class_name, super_class_var_name, super_class_loc] = super_class
                         super_class_name = super_class_name.split('_')[-1]
@@ -1002,7 +1003,7 @@ class System:
 
                 elif instRule['tag'] == 'IParen':
                     self.check_node({'tag': 'InstDecl', 'contents': [ann, None, instRule['contents'][1], instDecl]},
-                                    term, head)
+                                    term, head, parents)
 
             case {"tag": "ClassDecl", 'contents': [ann, context, decl_head, _, decls]}:
                 [class_name, *vs_names] = self.get_head_name(decl_head, [])
@@ -1020,7 +1021,7 @@ class System:
                     type_decl = decl['contents'][1]
                     names = type_decl['contents'][1]
 
-                    self.check_node(type_decl, wildcard, Head.type_of('module'), toplevel)
+                    self.check_node(type_decl, wildcard, Head.type_of('module'),  parents, toplevel)
                     for name in names:
                         name = combine_module_ident(self.current_module_name, self.get_name(name, toplevel))
                         name_var = self.bind(name)
@@ -1067,7 +1068,7 @@ class System:
                         arg_vars = self.bind_n(len(types), con_name)
 
                         for t_ast, t_var in zip(types, arg_vars):
-                            self.check_node(t_ast, t_var, Head.type_of(con_name))
+                            self.check_node(t_ast, t_var, Head.type_of(con_name), parents)
                         self.add_rule(T == con_var, Head.type_of(con_name), ann, watch=con_var, rule_type=RuleType.Decl)
                         self.add_ambient_rule(con_var == fun_of(*arg_vars, adt_var), Head.type_of(con_name))
                     else:
@@ -1080,10 +1081,10 @@ class System:
                         var_pat = self.bind(var_name)
                         self.call_graph.add_closure(head.name, var_name, CallGraph.FREE)
                         self.add_rule(T == var_pat, Head.type_of(var_name), ann, var_pat, rule_type=RuleType.Decl)
-                        self.check_node(rhs, var_pat, Head.type_of(var_name))
+                        self.check_node(rhs, var_pat, Head.type_of(var_name), parents)
 
                         if wheres is not None:
-                            self.check_node(wheres, self.fresh(), Head.type_of(var_name))
+                            self.check_node(wheres, self.fresh(), Head.type_of(var_name), parents)
                     case _:
                         raise NotImplementedError(f"PatBind with {pat.get('tag')} is not supported")
 
@@ -1101,40 +1102,42 @@ class System:
                 for match in matches:
                     [ann, _, args, rhs, wheres] = match['contents']
                     for arg, var_arg in zip(args, var_args):
-                        self.check_node(arg, var_arg, head=Head.type_of(fun_name))
-                    self.check_node(rhs, var_rhs, head=Head.type_of(fun_name))
+                        self.check_node(arg, var_arg, Head.type_of(fun_name), parents)
+                    self.check_node(rhs, var_rhs, Head.type_of(fun_name), parents)
                     if wheres is not None:
-                        self.check_node(wheres, self.fresh(), Head.type_of(fun_name))
+                        self.check_node(wheres, self.fresh(), Head.type_of(fun_name), parents)
 
             case {'tag': 'TypeSig', 'contents': [ann, names, sig]}:
                 for name in names:
                     fun_name = combine_module_ident(self.current_module_name, self.get_name(name, toplevel))
                     fun_var = self.bind(fun_name)
-                    self.add_rule(fun_var == T, Head.type_of(fun_name), sig['contents'][0], watch=fun_var,
+                    term_var = self.bind(fun_name)
+                    self.add_ambient_rule(term_var == T, Head.type_of(fun_name))
+                    self.add_rule(fun_var == term_var, Head.type_of(fun_name), sig['contents'][0], watch=term_var,
                                   rule_type=RuleType.Type)
-                    self.check_node(sig, fun_var, head=Head.type_of(fun_name))
+                    self.check_node(sig, fun_var, Head.type_of(fun_name), parents)
 
             case {'tag': 'BDecls', 'contents': [ann, decls]}:
                 for decl in decls:
-                    self.check_node(decl, atom('false'), head)
+                    self.check_node(decl, atom('false'), head, parents)
 
             case {'tag': 'UnGuardedRhs', 'contents': [ann, exp]}:
-                self.check_node(exp, term, head)
+                self.check_node(exp, term, head, parents)
 
             case {'tag': 'GuardedRhss', 'contents': [ann, rhss]}:
                 for rhs in rhss:
                     self.check_node({
                         'tag': 'GuardedRhs',
                         'contents': rhs
-                    }, term, head)
+                    }, term, head, parents)
 
             case {'tag': 'GuardedRhs', 'contents': [ann, stmts, exp]}:
-                self.check_node(exp, term, head)
+                self.check_node(exp, term, head, parents)
                 for stmt in stmts:
                     match stmt:
                         case {'tag': 'Qualifier', 'contents': [ann, exp]}:
                             pattern_var = self.bind(head.name)
-                            self.check_node(exp, pattern_var, head)
+                            self.check_node(exp, pattern_var, head, parents)
                             self.add_rule(pattern_var == t_bool, head, ann, watch=pattern_var,
                                           rule_type=RuleType.Pattern)
 
@@ -1143,10 +1146,10 @@ class System:
 
             # Exp types:
             case {'tag': 'Lit', 'contents': [ann, lit]}:
-                self.check_node(lit, term, head)
+                self.check_node(lit, term, head, parents)
 
             case {'tag': 'Con', 'contents': [ann, qname]}:
-                self.check_node({'tag': 'Var', 'contents': [ann, qname]}, term, head)
+                self.check_node({'tag': 'Var', 'contents': [ann, qname]}, term, head, parents)
 
             case {'tag': 'Var', 'contents': [ann, qname]}:
                 var_name = self.get_qname(qname, toplevel)
@@ -1161,7 +1164,7 @@ class System:
                 node_vars = self.bind_n(len(exps), head.name)
                 self.add_rule(term == tuple_of(*node_vars), head, ann, watch=term, rule_type=RuleType.Tuple)
                 for exp, node_var in zip(exps, node_vars):
-                    self.check_node(exp, node_var, head)
+                    self.check_node(exp, node_var, head, parents)
 
             case {'tag': 'InfixApp', 'contents': [ann, exp1, op, exp2]}:
                 self.check_node({
@@ -1172,14 +1175,15 @@ class System:
                         exp2
                     ]
                 }
-                    , term, head)
+                , term, head, parents)
 
             case {'tag': 'App', 'contents': [ann, exp1, exp2]}:
                 [var1, var2, var_result] = self.bind_n(3, head.name)
                 self.add_ambient_rule(term == var_result, head)
+                # self.add_ambient_rule(var1 == fun_of(var2, term), head)
                 self.add_rule(var1 == fun_of(var2, term), head, ann, watch=var_result, rule_type=RuleType.App)
-                self.check_node(exp1, var1, head)
-                self.check_node(exp2, var2, head)
+                self.check_node(exp1, var1, head, parents)
+                self.check_node(exp2, var2, head, parents)
 
             case {'tag': 'RightSection', 'contents': [ann, op, right]}:
                 [v_op, v_left, v_right, v_result] = self.bind_n(4, head.name)
@@ -1191,8 +1195,8 @@ class System:
                     term == fun_of(v_left, v_result),
                     head, ann, watch=term, rule_type=RuleType.App
                 )
-                self.check_node(op, v_op, head)
-                self.check_node(right, v_right, head)
+                self.check_node(op, v_op, head, parents)
+                self.check_node(right, v_right, head, parents)
 
             case {'tag': 'LeftSection', 'contents': [ann, left, op]}:
                 [v_op, v_left, v_right, v_result] = self.bind_n(4, head.name)
@@ -1204,16 +1208,16 @@ class System:
                     term == fun_of(v_right, v_result),
                     head, ann, watch=term, rule_type=RuleType.App
                 )
-                self.check_node(op, v_op, head)
-                self.check_node(left, v_left, head)
+                self.check_node(op, v_op, head, parents)
+                self.check_node(left, v_left, head, parents)
 
             case {'tag': 'Lambda', 'contents': [ann, pats, exp]}:
                 fun_name = self.lambda_name()
                 var_args = self.bind_n(len(pats), fun_name)
                 var_rhs = self.bind(fun_name)
-                self.check_node(exp, var_rhs, Head.type_of(fun_name))
+                self.check_node(exp, var_rhs, Head.type_of(fun_name), parents)
                 for pat, pat_var in zip(pats, var_args):
-                    self.check_node(pat, pat_var, Head.type_of(fun_name))
+                    self.check_node(pat, pat_var, Head.type_of(fun_name), parents)
                 self.add_ambient_rule(T == fun_of(*var_args, var_rhs), Head.type_of(fun_name))
                 self.call_graph.add_closure(head.name, fun_name, CallGraph.FREE)
                 lambda_var = self.bind(head.name)
@@ -1222,12 +1226,12 @@ class System:
 
             case {'tag': 'Do', 'contents': [_, stmts]}:
                 for stmt in stmts[:-1]:
-                    self.check_node(stmt, term, head)
+                    self.check_node(stmt, term, head, parents)
                 assert stmts[-1]['tag'] == 'Qualifier'
-                self.check_node(stmts[-1]['contents'][1], term, head)
+                self.check_node(stmts[-1]['contents'][1], term, head, parents)
 
             case {'tag': 'Paren', 'contents': [_, exp]}:
-                self.check_node(exp, term, head)
+                self.check_node(exp, term, head, parents)
 
             case {'tag': "If", 'contents': [ann, cond, left_branch, right_branch]}:
                 var_cond = self.bind(head.name)
@@ -1238,51 +1242,50 @@ class System:
                               cond['contents'][0],
                               watch=var_proxy,
                               rule_type=RuleType.Lit)
-                self.check_node(cond, var_cond, head)
-                self.check_node(left_branch, term, head)
-                self.check_node(right_branch, term, head)
+                self.check_node(cond, var_cond, head, parents)
+                self.check_node(left_branch, term, head, parents)
+                self.check_node(right_branch, term, head, parents)
 
             case {'tag': 'Case', 'contents': [ann, exp, alts]}:
                 matched_var = self.bind(head.name)
                 rhs_var: Term = self.bind(head.name)
-                self.check_node(exp, matched_var, head)
+                self.check_node(exp, matched_var, head, parents)
                 self.add_rule(rhs_var == term, head, ann, watch=rhs_var, rule_type=RuleType.Lit)
                 for alt in alts:
                     [alt_ann, pat, rhs, binds] = alt
-                    self.check_node(pat, matched_var, head)
-                    self.check_node(rhs, rhs_var, head)
+                    self.check_node(pat, matched_var, head, parents)
+                    self.check_node(rhs, rhs_var, head, parents)
 
             case {'tag': 'Let', 'contents': [ann, binds, exp]}:
                 decls = binds['contents'][1]
                 for decl in decls:
-                    self.check_node(decl, atom('false'), head)
-                self.check_node(exp, term, head)
+                    self.check_node(decl, atom('false'), head, parents)
+                self.check_node(exp, term, head, parents)
 
             case {'tag': 'List', 'contents': [ann, exps]}:
                 elem_var = self.bind(head.name)
                 self.add_rule(term == list_of(elem_var), head, ann, watch=term, rule_type=RuleType.Lit)
                 for exp in exps:
-                    self.check_node(exp, elem_var, head)
+                    self.check_node(exp, elem_var, head, parents)
 
             # Statements
             case {'tag': 'Generator', 'contents': [ann, pat, exp]}:
                 v_exp = self.bind(head.name)
                 v_pat = self.bind(head.name)
-                self.check_node(exp, v_exp, head)
+                self.check_node(exp, v_exp, head, parents)
                 monad_var = self.bind(head.name)
                 self.add_ambient_rule(struct('adt', cons(monad_var, wildcard)) == term, head)
 
                 self.add_ambient_rule(
                     adt(monad_var, [v_pat]) == v_exp, head)
-                self.check_node(pat, v_pat, head)
+                self.check_node(pat, v_pat, head, parents)
 
             case {'tag': 'Qualifier', 'contents': [ann, exp]}:
                 v_exp = self.bind(head.name)
-                self.check_node(exp, v_exp, head)
+                self.check_node(exp, v_exp, head, parents)
                 monad_var = self.bind(head.name)
                 self.add_ambient_rule(struct('adt', cons(monad_var, wildcard)) == term, head)
-                self.add_ambient_rule(
-                    struct('adt', cons(monad_var, wildcard)) == v_exp, head)
+                self.add_ambient_rule(struct('adt', cons(monad_var, wildcard)) == v_exp, head)
 
             case {'tag': 'LetStmt', 'contents': [ann, exp]}:
                 raise NotImplementedError("LetStmt")
@@ -1312,11 +1315,9 @@ class System:
                     if qname['tag'] == 'Special':
                         match qname['contents'][1]:
                             case {'tag': 'UnitCon', 'contents': _}:
-                                # self.add_rule(term == t_unit, head, ann, watch=term, rule_type=RuleType.Type)
                                 self.add_ambient_rule(term == t_unit, head)
 
                             case {'tag': 'ListCon', 'contents': _}:
-                                # self.add_rule(term == atom('list'), head, ann, watch=term, rule_type=RuleType.Type)
                                 self.add_ambient_rule(term == atom('list'), head)
 
                             case _:
@@ -1336,62 +1337,50 @@ class System:
                         head
                     )
                     for type_part, v in zip(items, vs):
-                        self.check_node(type_part, v, head)
+                        self.check_node(type_part, v, head, parents)
                 else:
                     v1: Term
                     v2: Term
                     [v1, v2] = self.bind_n(2, head.name)
-                    # self.add_rule(term == adt(v1, [v2]), head, ann, watch=term, rule_type=RuleType.Type)
                     self.add_ambient_rule(term == adt(v1, [v2]), head)
-                    self.check_node(t1, v1, head)
-                    self.check_node(t2, v2, head)
+                    self.check_node(t1, v1, head, parents)
+                    self.check_node(t2, v2, head, parents)
 
             case {'tag': 'TyFun', 'contents': [ann, t1, t2]}:
                 [var1, var2] = self.bind_n(2, head.name)
-                self.check_node(t1, var1, head)
-                self.check_node(t2, var2, head)
-                # self.add_rule(term == fun_of(var1, var2), head, ann, watch=term, rule_type=RuleType.Type)
+                self.check_node(t1, var1, head, parents)
+                self.check_node(t2, var2, head, parents)
                 self.add_ambient_rule(term == fun_of(var1, var2), head)
 
             case {'tag': 'TyTuple', 'contents': [ann, _, tys]}:
                 args = self.bind_n(len(tys), head.name)
-                self.add_rule(term == tuple_of(*args), head, ann, watch=term, rule_type=RuleType.Type)
-                # self.add_ambient_rule(term == tuple_of(*args), head)
+                self.add_ambient_rule(term == tuple_of(*args), head)
                 for node_ast, node_term in zip(tys, args):
-                    self.check_node(node_ast, node_term, head)
+                    self.check_node(node_ast, node_term, head, parents)
 
             case {'tag': 'TyList', 'contents': [ann, tnode]}:
                 t_var = self.bind(head.name)
-                self.add_ambient_rule(term == list_of(t_var), head,)
-                # self.add_rule(term == list_of(t_var), head, ann, watch=term, rule_type=RuleType.Type)
-                self.check_node(tnode, t_var, head)
+                self.add_ambient_rule(term == list_of(t_var), head, )
+                self.check_node(tnode, t_var, head, parents)
 
             case {'tag': 'TyVar', 'contents': [ann, name]}:
                 var_name = name['contents'][1]
                 self.add_ambient_rule(
                     term == var('TypeVar_' + var_name), head
                 )
-                # self.add_rule(term == var('TypeVar_' + var_name), head, ann, watch=term, rule_type=RuleType.Type)
 
             case {'tag': 'TyParen', 'contents': [_, ty]}:
-                self.check_node(ty, term, head)
+                self.check_node(ty, term, head, parents)
 
             case {'tag': 'TyForall', 'contents': [_, _, _context, t]}:
                 qualifications: list[tuple[str, str, dict]] = self.get_context(_context)
-                self.check_node(t, term, head)
+                self.check_node(t, term, head, parents)
                 for [class_name, type_var_name, ann] in qualifications:
                     class_name = class_name.split('_')[-1]
                     self.add_ambient_rule(
                         require_class(class_name, var('TypeVar_' + type_var_name), wildcard),
                         head,
                     )
-                    # self.add_rule(
-                    #     require_class(class_name, var('TypeVar_' + type_var_name), wildcard),
-                    #     head,
-                    #     ann,
-                    #     watch=nothing,
-                    #     rule_type=RuleType.TypeClass
-                    # )
 
             # Patterns
             case {'tag': 'PVar', 'contents': [ann, name]}:
@@ -1405,19 +1394,19 @@ class System:
                 elems = self.bind_n(len(pats), head.name)
                 self.add_rule(term == tuple_of(*elems), head, ann, watch=term, rule_type=RuleType.Lit)
                 for pat, elem in zip(pats, elems):
-                    self.check_node(pat, elem, head)
+                    self.check_node(pat, elem, head, parents)
 
             case {'tag': 'PList', 'contents': [ann, pats]}:
                 elem = self.bind(head.name)
                 self.add_rule(term == list_of(elem), head, ann, watch=term, rule_type=RuleType.Lit)
                 for pat in pats:
-                    self.check_node(pat, elem, head)
+                    self.check_node(pat, elem, head, parents)
 
             case {'tag': 'PLit', 'contents': [ann, _, lit]}:
-                self.check_node(lit, term, head)
+                self.check_node(lit, term, head, parents)
 
             case {'tag': "PParen", "contents": [ann, p]}:
-                self.check_node(p, term, head)
+                self.check_node(p, term, head, parents)
 
             case {'tag': 'PApp', 'contents': [ann, qname, p_args]}:
                 fun_name = self.get_qname(qname, toplevel)
@@ -1427,13 +1416,13 @@ class System:
                               rule_type=RuleType.App)
                 self.call_graph.add_call(head.name, fun_name, fun_var.value)
                 for arg_ast, arg_var in zip(p_args, arg_vars):
-                    self.check_node(arg_ast, arg_var, head)
+                    self.check_node(arg_ast, arg_var, head, parents)
 
             case {'tag': 'PInfixApp', 'contents': [ann, p1, op, p2]}:
                 self.check_node({
                     'tag': 'PApp',
                     'contents': [ann, op, [p1, p2]]
-                }, term, head)
+                }, term, head, parents)
             case {'tag': 'PWildCard', 'contents': _}:
                 pass
             case {'tag': 'QVarOp', 'contents': [ann, qname]}:
@@ -1473,7 +1462,6 @@ if __name__ == "__main__":
     call_graphs = {}
     free_vars = {}
     type_alias = {}
-
     for file_id, parse_result in enumerate(parsed_data['contents']):
         ast = parse_result['ast']
         file = parse_result['file']

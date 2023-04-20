@@ -158,9 +158,9 @@ class Prolog(ContextDecorator):
 :- reexport('{self.builtin.as_posix()}')."""
         imports = '\n'.join([f":- reexport('{m}')." for m in self.modules])
         multifile = ":- multifile "  + ",".join([f'{mf}' for mf in self.multifiles]) + "." if self.multifiles else ''
-        use_module = '\n'.join([f":- use_module('{m}')." for m in self.use_module])
         clauses = '\n'.join([c.__str__() + '.' for c in self.clauses])
-        return '\n'.join([header, imports, use_module, multifile, clauses])
+
+        return '\n'.join([header, imports, multifile, clauses])
 
 
     def add_clause(self, clause: Clause):
@@ -197,6 +197,18 @@ class Prolog(ContextDecorator):
             else:
                 raise e
 
+    def rerun(self) -> bool | list[bool | dict]:
+        consult_query = ','.join(['make,'] +
+                                 ['once((' + ','.join([q.__str__() for q in self.queries]) + '))']
+                                 )
+        try:
+            result = self.prolog_thread.query(consult_query)
+            return result
+        except Exception as e:
+            if isinstance(e, PrologError) and e.args[0].startswith('occurs_check'):
+                return False
+            else:
+                raise e
 
     def run_raw_query(self, raw: str):
         self.prolog_thread.query_async(raw, find_all=False)
@@ -212,7 +224,9 @@ if __name__ == "__main__":
             r = prolog.run_raw_query(f'''
 set_prolog_flag(occurs_check, error),
 consult('C:/Users/sfuu0016/Projects/lof/tmp/test/Test.pl'),
-x(X).
+findall(PredicateIndicator, current_predicate(_, PredicateIndicator), Predicates),
+maplist(export_predicate, Predicates),
+foo(X).
 ''')
             print(r)
         except Exception as e:
@@ -220,5 +234,4 @@ x(X).
                 print('Occurcheck failed')
             else:
                 raise e
-
 

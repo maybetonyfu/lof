@@ -184,11 +184,18 @@ class Prolog(ContextDecorator):
             f.write(self.generate_script())
 
     def run_file(self) -> bool | list[bool | dict]:
-        consult_query = ','.join(['style_check(-singleton)'] +
+        consult_query = ','.join(['set_prolog_flag(occurs_check, error)', 'style_check(-singleton)'] +
                                  [f"consult('{self.file.as_posix()}')"] +
                                  ['once((' + ','.join([q.__str__() for q in self.queries]) + '))']
                                  )
-        return self.prolog_thread.query(consult_query)
+        try:
+            result = self.prolog_thread.query(consult_query)
+            return result
+        except Exception as e:
+            if isinstance(e, PrologError) and e.args[0].startswith('occurs_check'):
+                return False
+            else:
+                raise e
 
 
     def run_raw_query(self, raw: str):
@@ -199,6 +206,19 @@ class Prolog(ContextDecorator):
 
 
 if __name__ == "__main__":
-    with Prolog(interface=PlInterface.File, file=Path('./test.pl')) as prolog:
-        r = prolog.run_raw_query(f'''member(a, X),member(b, X), X=[a]''')
-        print(r)
+    with Prolog(interface=PlInterface.File, file=Path('C:/Users/sfuu0016/Projects/lof/tmp/test/Test.pl')) as prolog:
+        print(prolog.file.read_text())
+        try:
+            r = prolog.run_raw_query(f'''
+set_prolog_flag(occurs_check, error),
+consult('C:/Users/sfuu0016/Projects/lof/tmp/test/Test.pl'),
+x(X).
+''')
+            print(r)
+        except Exception as e:
+            if isinstance(e, PrologError) and e.args[0].startswith('occurs_check'):
+                print('Occurcheck failed')
+            else:
+                raise e
+
+

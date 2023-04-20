@@ -41,6 +41,8 @@ export interface FileStore {
     fileList: string[],
     buffer: string,
     openedFile: null | string,
+    prolog: boolean,
+    showProlog: () => Promise<void>,
     writeFile: () => Promise<void>,
     readFile: (name: string) => Promise<void>,
     setFileList: () => Promise<void>

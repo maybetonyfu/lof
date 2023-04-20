@@ -13,9 +13,11 @@ const useFileStore: StateCreator<
 > = (set, get) => ({
     fileList: [],
     openedFile: null,
+    prolog: false,
     buffer: "",
     setBuffer: (buffer: string) => set({buffer, dirty: true}),
     readFile: async (file: string) => {
+
         let response = await fetch(`/api/file/${file}?user_id=${user_id}`)
         let file_text: string = await response.text()
         set({
@@ -24,7 +26,30 @@ const useFileStore: StateCreator<
             dirty: false
         })
     },
+    showProlog: async () => {
+        if (get().prolog) {
+            let file = (get().openedFile) as string
+            let response = await fetch(`/api/file/${file}?user_id=${user_id}`)
+            let file_text: string = await response.text()
+            set({
+                buffer: file_text,
+                prolog: false
+            })
+        } else {
+            let currentFile = get().openedFile
+            if (currentFile !== null) {
+                let prologFilePath = currentFile.substr(0, currentFile.lastIndexOf(".")) + ".pl";
+                let response = await fetch(`/api/file/${prologFilePath}?user_id=${user_id}`)
+                let prologText: string = await response.text()
+                set({
+                    buffer: prologText,
+                    prolog: true,
+                })
 
+            }
+        }
+
+    },
     writeFile: async () => {
         let openedFile = get().openedFile
         let buffer = get().buffer
@@ -116,6 +141,7 @@ const useEditorStore: StateCreator<
     EditorStore
 > = (set, get) => ({
     highlights: [],
+
     previousHighlights: null,
     dirty: false,
     setDirty(dirty) {

@@ -6,15 +6,20 @@ function Header () {
     let writeFile = useAppStore((state: AppStore) => state.writeFile)
     let typeCheck = useAppStore((state: AppStore) => state.typeCheck)
     let setHighlights = useAppStore((state: AppStore) => state.setHighlights)
+    let showProlog = useAppStore((state: AppStore) => state.showProlog)
     let  isLoading = useAppStore((state: AppStore) => state.isLoading)
     let  openedFile = useAppStore((state: AppStore) => state.openedFile)
     return (<Flex w={'100%'}  py={1} bg={'blackAlpha.100'} justify={'space-between'}>
         <Box></Box>
-        <Flex px={8}><Button
+        <Flex px={8}>
+            <Button size={'sm'} onClick={_ => showProlog()}>Show prolog</Button>
+            <Button
             disabled={isLoading}
             onClick={_ => {
                 writeFile().then((_) => typeCheck(openedFile as string)).then(setHighlights)}}
-            colorScheme={'blue'} size={'sm'}>Save</Button></Flex>
+            colorScheme={'blue'} size={'sm'}>Save</Button>
+
+        </Flex>
     </Flex>)
 }
 export default Header

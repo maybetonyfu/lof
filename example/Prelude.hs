@@ -31,6 +31,7 @@ class Applicative f where
 
 class Monad m where
     return :: a -> m a
+    (>>) :: m a -> m b -> m b
     (>>=) :: m a -> (a -> m b) -> m b
 
 instance Functor Maybe
@@ -65,7 +66,11 @@ instance Eq Bool
 instance Eq Ordering
 instance Eq Float
 instance Eq Char
+instance Eq a => Eq [a]
 
 instance Ord Int
 instance Ord Bool
 instance Ord Char
+
+filter :: (a -> Bool) -> [a] -> [a]
+filter = undefined

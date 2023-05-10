@@ -420,13 +420,20 @@ class Env(BaseModel):
     parent_rules: list[int]
 
     def with_head(self, head: Head) -> 'Env':
-        return Env(**self.dict(), head=head)
+        attributes = self.dict()
+        attributes.pop('head')
+        return Env(**attributes, head=head)
 
     def with_toplevel(self, toplevel: bool) -> 'Env':
-        return Env(**self.dict(), toplevel=toplevel)
+        attributes = self.dict()
+        attributes.pop('toplevel')
+        return Env(**attributes, toplevel=toplevel)
 
     def with_parent_rule(self, parent_rule: int) -> 'Env':
-        return Env(**self.dict(), parent_rules=[*self.parent_rules, parent_rule])
+        attributes = self.dict()
+        attributes.pop('parent_rules')
+
+        return Env(**attributes, parent_rules=[*self.parent_rules, parent_rule])
 
 
 class System:
@@ -542,68 +549,77 @@ class System:
         )
 
     def diagnose(self) -> Iterator[Diagnosis]:
-        for error in list(reversed(self.tc_errors)):
-            all_rule_ids = set().union(*[mus.rules for mus in error.mus_list])
-            all_rules = [self.rules[rid] for rid in all_rule_ids]
-            all_decl_names = {r.head.name for r in all_rules if
-                              r.head.type == HeadType.TypeOf
-                              # Maybe this is not necessary?
-                              and r.meta.type == RuleType.Decl
-                              }
-            all_decls = [Decl(
-                name=decl_name,
-                display_name=decode_decl_name(decl_name),
-                loc=[rule.meta.loc for rule in self.rules if
-                     rule.head.name == decl_name and rule.meta.type == RuleType.Decl][0],
-                type=None) for decl_name in all_decl_names]
-
-            causes = []
+        for rule in self.rules:
+            if rule.meta is not None:
+                print('rule: ', rule.rid)
+                print('text: ', rule.meta.src_text)
+                print('parent_rules', rule.meta.parent_rules)
+        for error in self.tc_errors:
             for mcs in error.mcs_list:
-                types: dict[str, Type] = self.infer_type(error.error_id, mcs.setId)
-                mcs_rules = [self.rules[rid] for rid in mcs.rules]
-                suggestions = []
-
-                for rule in mcs_rules:
-                    is_type_class_missing = rule.meta.type == RuleType.TypeClass
-                    is_type_change = rule.meta.type == RuleType.Type
-                    a = Airium(source_minify=True)
-                    score = 0
-                    with a.div(klass='suggestion'):
-                        if is_type_class_missing:
-                            a.span(_t="Make sure the proper instance of the type class")
-                            a.span(_t=rule.meta.src_text.value, klass='code type primary')
-                            a.span(_t='is implemented.')
-                        elif is_type_change:
-                            a.span(_t='Change')
-                            a.span(_t=rule.meta.src_text.value, klass='code type primary')
-                        elif not is_type_change:
-                            a.span(_t='Change')
-                            a.span(_t=rule.meta.src_text.value, klass='code term primary')
-
-                    suggestions.append(
-                        Suggestion(
-                            title=rule.meta.src_text.value,
-                            text=str(a),
-                            score=score,
-                            fix_size=len(rule.meta.src_text.value)))
-
-                locs = [r.meta.loc for r in mcs_rules]
-                cause = Cause(
-                    decls=list(
-                        map(lambda decl: Decl(name=decode(decl.name), loc=decl.loc, type=str(types[decl.name]),
-                                              display_name=decl.display_name),
-                            all_decls)),
-                    suggestions=suggestions,
-                    locs=locs,
-                    fix_size=sum([s.fix_size for s in suggestions]),
-                    score=sum([s.score for s in suggestions])
-                )
-                causes.append(cause)
-
-            diagnosis = Diagnosis(decls=all_decls,
-                                  causes=sorted(causes, key=lambda c: (c.score, c.fix_size)),
-                                  locs=[r.meta.loc for r in all_rules])
-            yield diagnosis
+                print(mcs)
+        return []
+        # for error in list(reversed(self.tc_errors)):
+        #     all_rule_ids = set().union(*[mus.rules for mus in error.mus_list])
+        #     all_rules = [self.rules[rid] for rid in all_rule_ids]
+        #     all_decl_names = {r.head.name for r in all_rules if
+        #                       r.head.type == HeadType.TypeOf
+        #                       # Maybe this is not necessary?
+        #                       and r.meta.type == RuleType.Decl
+        #                       }
+        #     all_decls = [Decl(
+        #         name=decl_name,
+        #         display_name=decode_decl_name(decl_name),
+        #         loc=[rule.meta.loc for rule in self.rules if
+        #              rule.head.name == decl_name and rule.meta.type == RuleType.Decl][0],
+        #         type=None) for decl_name in all_decl_names]
+        #
+        #     causes = []
+        #     for mcs in error.mcs_list:
+        #         types: dict[str, Type] = self.infer_type(error.error_id, mcs.setId)
+        #         mcs_rules = [self.rules[rid] for rid in mcs.rules]
+        #         suggestions = []
+        #
+        #         for rule in mcs_rules:
+        #             is_type_class_missing = rule.meta.type == RuleType.TypeClass
+        #             is_type_change = rule.meta.type == RuleType.Type
+        #             a = Airium(source_minify=True)
+        #             score = 0
+        #             with a.div(klass='suggestion'):
+        #                 if is_type_class_missing:
+        #                     a.span(_t="Make sure the proper instance of the type class")
+        #                     a.span(_t=rule.meta.src_text.value, klass='code type primary')
+        #                     a.span(_t='is implemented.')
+        #                 elif is_type_change:
+        #                     a.span(_t='Change')
+        #                     a.span(_t=rule.meta.src_text.value, klass='code type primary')
+        #                 elif not is_type_change:
+        #                     a.span(_t='Change')
+        #                     a.span(_t=rule.meta.src_text.value, klass='code term primary')
+        #
+        #             suggestions.append(
+        #                 Suggestion(
+        #                     title=rule.meta.src_text.value,
+        #                     text=str(a),
+        #                     score=score,
+        #                     fix_size=len(rule.meta.src_text.value)))
+        #
+        #         locs = [r.meta.loc for r in mcs_rules]
+        #         cause = Cause(
+        #             decls=list(
+        #                 map(lambda decl: Decl(name=decode(decl.name), loc=decl.loc, type=str(types[decl.name]),
+        #                                       display_name=decl.display_name),
+        #                     all_decls)),
+        #             suggestions=suggestions,
+        #             locs=locs,
+        #             fix_size=sum([s.fix_size for s in suggestions]),
+        #             score=sum([s.score for s in suggestions])
+        #         )
+        #         causes.append(cause)
+        #
+        #     diagnosis = Diagnosis(decls=all_decls,
+        #                           causes=sorted(causes, key=lambda c: (c.score, c.fix_size)),
+        #                           locs=[r.meta.loc for r in all_rules])
+        #     yield diagnosis
 
     def solve_bool(self, rules: set[int]) -> bool:
         return self.solve(rules) is not False

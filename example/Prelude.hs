@@ -1,5 +1,6 @@
 module Prelude where
 
+type String = [Char]
 undefined = error
 
 length :: [a] -> Int
@@ -74,3 +75,46 @@ instance Ord Char
 
 filter :: (a -> Bool) -> [a] -> [a]
 filter = undefined
+
+read :: [Char] -> a
+read = undefined
+
+show :: a -> [Char]
+show = undefined
+
+data Either a b = Left a | Right b
+otherwise = True
+
+map :: (a -> b) -> [a] -> [b]
+map = undefined
+
+foldr :: (a -> b -> b) -> b -> [a] -> b
+foldr = undefined
+
+foldl :: (b -> a -> b) -> b -> [a] -> b
+foldl = undefined
+
+
+head :: [a] -> a
+head = undefined
+
+zipWith :: (a->b->c) -> [a] -> [b] -> [c]
+zipWith = undefined
+
+mod :: Int -> Int -> Int
+mod = undefined
+
+fst :: (a,b) -> a
+fst = undefined
+
+snd :: (a,b) -> b
+snd = undefined
+
+(++) :: [a] -> [a] -> [a]
+(++) = undefined
+
+pi :: Float
+pi = 3.14
+
+sum :: [Float] -> Float
+sum = undefined 

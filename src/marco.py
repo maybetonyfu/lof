@@ -25,6 +25,7 @@ class Marco:
         self.mss_list: list[RuleSet] = []
         self.mcs_list: list[RuleSet] = []
         self.tc_errors: list[Error] = []
+        self.parent_relations: list[tuple[int, int]] = []
         self.solver = Solver()
         self.loop_counter = 0
         self.max_loops = 999
@@ -43,7 +44,8 @@ class Marco:
                 seed = seed - {c}
 
         return seed
-
+    def get_other_muses(self, mus: set[int]) -> list[set[int]]:
+        return []
     def get_unexplored(self, model: ModelRef) -> set[int]:
         seeds = []
         for rid in self.rules:
@@ -76,8 +78,13 @@ class Marco:
                 self.solver.add(Or([Bool(r) for r in self.rules if r not in mss]))
             else:
                 mus = self.shrink(seed)
+                other_muses = self.get_other_muses(mus)
                 self.mus_list.append(RuleSet(rules=mus, setId=len(self.mus_list)))
                 self.solver.add(Not(And([Bool(r) for r in mus])))
+
+                for other_mus in other_muses:
+                    self.mus_list.append(RuleSet(rules=other_mus, setId=len(self.mus_list)))
+                    self.solver.add(Not(And([Bool(r) for r in other_mus])))
 
             successful, model = self.is_satisfiable()
 

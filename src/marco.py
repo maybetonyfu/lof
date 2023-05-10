@@ -18,14 +18,14 @@ class Error(BaseModel):
 
 
 class Marco:
-    def __init__(self, rules: set[int], sat_fun: Callable[[set[int]], bool]):
+    def __init__(self, rules: set[int], sat_fun: Callable[[set[int]], bool], parent_relations: list[tuple[int, int]]):
         self.rules = rules
         self.graph = networkx.Graph()
         self.mus_list: list[RuleSet] = []
         self.mss_list: list[RuleSet] = []
         self.mcs_list: list[RuleSet] = []
         self.tc_errors: list[Error] = []
-        self.parent_relations: list[tuple[int, int]] = []
+        self.parent_relations: list[tuple[int, int]] = parent_relations
         self.solver = Solver()
         self.loop_counter = 0
         self.max_loops = 999

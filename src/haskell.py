@@ -4,7 +4,7 @@ from enum import Enum
 from itertools import chain
 from subprocess import run
 import ujson
-from typing import Any, TypeAlias, Iterator
+from typing import Any, TypeAlias, Iterator, cast
 from airium import Airium
 from src.encoder import encode, decode
 from string import ascii_lowercase
@@ -800,9 +800,16 @@ class System:
         if prolog_result:
             return []
         else:
+            parent_relations : list[tuple[int, int]] = []
+            for rule in self.rules:
+                if rule.meta is not None:
+                    for parent in cast(RuleMeta, rule.meta).parent_rules:
+                        parent_relations.append((parent, rule.rid))
             marco = Marco(rules={r.rid for r in self.rules if (not r.is_ambient()) and
                                  (self.base_dir / r.meta.loc[0] == self.hs_file_path)
-                                 }, sat_fun=self.solve_bool)
+                                 }, sat_fun=self.solve_bool,
+                          parent_relations = parent_relations
+                          )
             marco.run()
             marco.analyse()
             self.tc_errors = marco.tc_errors

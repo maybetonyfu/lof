@@ -5,7 +5,7 @@ module Main where
 
 import RIO
 import Types
-import Process
+import Process hiding (main)
 import RIO.Process
 import System.Environment
 import qualified RIO.Map as M

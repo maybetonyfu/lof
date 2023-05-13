@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <title>Goanna</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono&display=swap" rel="stylesheet">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="//unpkg.com/alpinejs" defer></script>
+    <style>
+        .code {
+            font-family: "JetBrains Mono", monospace;
+            font-variant-ligatures: none;
+            font-kerning: none;
+        }
+
+    </style>
+    <script>
+        let data = {
+            diagnoses: {{ data.diagnoses_json }}.map(d => JSON.parse(d)),
+            error_id: 0,
+            cause_id: 0
+        }
+    </script>
+</head>
+
+<body class="flex flex-col h-screen" x-data="data">
+<div class="menu-bar h-10 bg-gray-100"></div>
+<div class="main-interface flex" style="height: calc(100vh - 2.5rem)">
+    <div class="p-1">
+        {% for file in data.files %}
+        <a href="/editor/{{data.user_id}}/{{file}}"
+           class="h-8 block leading-8 bg-gray-200 my-0.5 px-2 {{ 'bg-gray-400' if file == data.opened_file else ' '}}">{{file}}</a>
+        {% endfor %}
+    </div>
+
+    <div class="h-full overflow-y-auto relative flex-grow">
+        {% if data.text %}
+        <div class="highlight absolute">
+            {% for l in range(data.number_of_lines) %}
+            <div class="line h-8 flex">
+                {% for l in range(data.number_of_cols) %}
+                <span class="code h-8 inline-block padding-0 text-white">.</span>
+                {% endfor %}
+            </div>
+            {% endfor %}
+        </div>
+        <pre class="code absolute leading-8 outline-none w-full" spellcheck="false" contenteditable="true">{{ data.text }}</pre>
+        {% endif %}
+
+    </div>
+
+    <div class="w-96 p-1 bg-gray-100 h-full overflow-y-auto" >
+        <div class="flex">
+            <template x-for="(diagnosis, e_id) in diagnoses">
+                <div x-text="'Error ' + error_id" @click="error_id = e_id"></div>
+            </template>
+        </div>
+        <div class="flex flex-col">
+             <template x-if="error_id != null && diagnoses.length != 0">
+                 <div>
+                    <template x-for="(cause, c_id) in diagnoses[error_id].causes">
+                        <div>
+                            <div @click="cause_id = c_id" class="bg-blue-200 cursor-pointer" x-text="'Cause ' + c_id"></div>
+                            <template x-if="cause_id == c_id">
+                                 <template x-for="(rule, rule_id) in diagnoses[error_id].causes[cause_id].rules">
+                                     <div x-text="rule.meta.src_text.value">
+                                     </div>
+                                 </template>
+                            </template>
+                        </div>
+                    </template>
+                 </div>
+             </template>
+        </div>
+    </div>
+</div>
+</body>
+</html>

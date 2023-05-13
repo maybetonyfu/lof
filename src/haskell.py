@@ -11,7 +11,7 @@ from string import ascii_lowercase
 from src.prolog import Prolog, Term, atom, var, struct, Clause, PlInterface, cons, nil, Kind, wildcard, \
     prolog_list_to_list, struct_extern, unify
 from src.maybe import Maybe, nothing, just
-from src.marco import Marco, Error
+from src.marco import Marco, Error, RuleSet
 from pydantic import BaseModel
 from pathlib import Path
 from platform import platform
@@ -19,7 +19,6 @@ from platform import platform
 Point: TypeAlias = tuple[int, int]
 Span: TypeAlias = tuple[Point, Point]
 Loc: TypeAlias = tuple[str, Span]
-
 
 def gather_type_synonym(module_ast: dict) -> [str]:
     decls = module_ast['contents'][4]
@@ -353,7 +352,7 @@ class RuleMeta(BaseModel):
     type: RuleType
     loc: Loc
     src_text: Maybe[str]
-    parent_rules: list[int]
+    parent_rule: int | None
 
 
 class Rule(BaseModel):
@@ -366,32 +365,11 @@ class Rule(BaseModel):
     def is_ambient(self) -> bool:
         return self.meta is None
 
-
-class Decl(BaseModel):
-    name: str
-    display_name: str
-    type: str | None
-    loc: Loc
-
-
-class Suggestion(BaseModel):
-    text: str
-    title: str
-    score: int
-    fix_size: int
-
-
 class Cause(BaseModel):
-    suggestions: list[Suggestion]
-    decls: list[Decl]
-    locs: list[Loc]
-    score: int
-    fix_size: int
-
+    rules: list[Rule]
 
 class Diagnosis(BaseModel):
     causes: list[Cause]
-    decls: list[Decl]
     locs: list[Loc]
 
 
@@ -417,7 +395,7 @@ class TypeClass(BaseModel):
 class Env(BaseModel):
     head: Head
     toplevel: bool
-    parent_rules: list[int]
+    parent_rule: int | None
 
     def with_head(self, head: Head) -> 'Env':
         attributes = self.dict()
@@ -431,9 +409,9 @@ class Env(BaseModel):
 
     def with_parent_rule(self, parent_rule: int) -> 'Env':
         attributes = self.dict()
-        attributes.pop('parent_rules')
+        attributes.pop('parent_rule')
 
-        return Env(**attributes, parent_rules=[*self.parent_rules, parent_rule])
+        return Env(**attributes, parent_rule=parent_rule)
 
 
 class System:
@@ -531,7 +509,7 @@ class System:
                     loc=loc,
                     src_text=src_text,
                     type=rule_type,
-                    parent_rules=env.parent_rules,
+                    parent_rule=env.parent_rule,
                 )
             )
         )
@@ -548,78 +526,44 @@ class System:
             )
         )
 
-    def diagnose(self) -> Iterator[Diagnosis]:
-        for rule in self.rules:
-            if rule.meta is not None:
-                print('rule: ', rule.rid)
-                print('text: ', rule.meta.src_text)
-                print('parent_rules', rule.meta.parent_rules)
+
+
+    def is_most_specific_fix(self, mcs: RuleSet, all_mcs: list[RuleSet]) -> bool:
+        def is_ancester(rule1: Rule, rule2: Rule) -> bool:
+            if rule1.rid == rule2.rid:
+                return True
+            elif rule2.meta and rule2.meta.parent_rule is not None:
+                if rule2.meta.parent_rule == rule1.rid:
+                    return True
+                else:
+                    parent = [r for r in self.rules if r.rid == rule2.meta.parent_rule][0]
+                    return is_ancester(rule1, parent)
+            else:
+                return False
+
+        def contains(fix1: RuleSet, fix2: RuleSet) -> bool:
+            fix1_rules = [r for r in self.rules if r.rid in fix1.rules]
+            fix2_rules = [r for r in self.rules if r.rid in fix2.rules]
+            return all([any([
+                is_ancester(rule1, rules2) for rule1 in fix1_rules]
+            ) for rules2 in fix2_rules])
+
+
+        result = not any([contains( mcs, other) for other in all_mcs if other.setId != mcs.setId])
+        return result
+
+    def diagnose(self) -> list[Diagnosis]:
+        diagnoses = []
         for error in self.tc_errors:
-            for mcs in error.mcs_list:
-                print(mcs)
-        return []
-        # for error in list(reversed(self.tc_errors)):
-        #     all_rule_ids = set().union(*[mus.rules for mus in error.mus_list])
-        #     all_rules = [self.rules[rid] for rid in all_rule_ids]
-        #     all_decl_names = {r.head.name for r in all_rules if
-        #                       r.head.type == HeadType.TypeOf
-        #                       # Maybe this is not necessary?
-        #                       and r.meta.type == RuleType.Decl
-        #                       }
-        #     all_decls = [Decl(
-        #         name=decl_name,
-        #         display_name=decode_decl_name(decl_name),
-        #         loc=[rule.meta.loc for rule in self.rules if
-        #              rule.head.name == decl_name and rule.meta.type == RuleType.Decl][0],
-        #         type=None) for decl_name in all_decl_names]
-        #
-        #     causes = []
-        #     for mcs in error.mcs_list:
-        #         types: dict[str, Type] = self.infer_type(error.error_id, mcs.setId)
-        #         mcs_rules = [self.rules[rid] for rid in mcs.rules]
-        #         suggestions = []
-        #
-        #         for rule in mcs_rules:
-        #             is_type_class_missing = rule.meta.type == RuleType.TypeClass
-        #             is_type_change = rule.meta.type == RuleType.Type
-        #             a = Airium(source_minify=True)
-        #             score = 0
-        #             with a.div(klass='suggestion'):
-        #                 if is_type_class_missing:
-        #                     a.span(_t="Make sure the proper instance of the type class")
-        #                     a.span(_t=rule.meta.src_text.value, klass='code type primary')
-        #                     a.span(_t='is implemented.')
-        #                 elif is_type_change:
-        #                     a.span(_t='Change')
-        #                     a.span(_t=rule.meta.src_text.value, klass='code type primary')
-        #                 elif not is_type_change:
-        #                     a.span(_t='Change')
-        #                     a.span(_t=rule.meta.src_text.value, klass='code term primary')
-        #
-        #             suggestions.append(
-        #                 Suggestion(
-        #                     title=rule.meta.src_text.value,
-        #                     text=str(a),
-        #                     score=score,
-        #                     fix_size=len(rule.meta.src_text.value)))
-        #
-        #         locs = [r.meta.loc for r in mcs_rules]
-        #         cause = Cause(
-        #             decls=list(
-        #                 map(lambda decl: Decl(name=decode(decl.name), loc=decl.loc, type=str(types[decl.name]),
-        #                                       display_name=decl.display_name),
-        #                     all_decls)),
-        #             suggestions=suggestions,
-        #             locs=locs,
-        #             fix_size=sum([s.fix_size for s in suggestions]),
-        #             score=sum([s.score for s in suggestions])
-        #         )
-        #         causes.append(cause)
-        #
-        #     diagnosis = Diagnosis(decls=all_decls,
-        #                           causes=sorted(causes, key=lambda c: (c.score, c.fix_size)),
-        #                           locs=[r.meta.loc for r in all_rules])
-        #     yield diagnosis
+            causes = []
+            for mcs in  error.mcs_list:
+                if self.is_most_specific_fix(mcs, error.mcs_list):
+                    mcs_rules = [self.rules[rid] for rid in mcs.rules]
+                    causes.append(Cause(rules=mcs_rules))
+
+            locs = list(chain(*[[r.meta.loc for r in cause.rules] for cause in causes]))
+            diagnoses.append(Diagnosis(causes=causes, locs=locs))
+        return diagnoses
 
     def solve_bool(self, rules: set[int]) -> bool:
         return self.solve(rules) is not False
@@ -782,16 +726,9 @@ class System:
 
     def marshal(self):
         self.file_content = self.hs_file_path.read_text()
-        self.check_node(self.ast, atom('true'), Env(head=Head.type_of('module'), toplevel=True, parent_rules=[]))
+        self.check_node(self.ast, atom('true'), Env(head=Head.type_of('module'), toplevel=True, parent_rule=None))
 
     def type_check(self) -> list[Diagnosis]:
-        # all_non_ambient_rules = [r for r in self.rules if not r.is_ambient()]
-        # all_non_ambient_nodes = [r.meta.node_id for r in all_non_ambient_rules]
-        # self.node_and_parent: dict[int, set[int]] = {}
-        # for r in all_non_ambient_rules:
-        #     self.node_and_parent[r.meta.node_id] = set(r.meta.parent_ids) & set(all_non_ambient_nodes) - {
-        #         r.meta.node_id}
-
         self.tc_errors = []
         prolog_result = self.solve({r.rid for r in self.rules if
                                     (not r.is_ambient()) and
@@ -802,9 +739,8 @@ class System:
         else:
             parent_relations : list[tuple[int, int]] = []
             for rule in self.rules:
-                if rule.meta is not None:
-                    for parent in cast(RuleMeta, rule.meta).parent_rules:
-                        parent_relations.append((parent, rule.rid))
+                if rule.meta is not None and rule.meta.parent_rule is not None:
+                    parent_relations.append((rule.meta.parent_rule, rule.rid))
             marco = Marco(rules={r.rid for r in self.rules if (not r.is_ambient()) and
                                  (self.base_dir / r.meta.loc[0] == self.hs_file_path)
                                  }, sat_fun=self.solve_bool,
@@ -813,7 +749,7 @@ class System:
             marco.run()
             marco.analyse()
             self.tc_errors = marco.tc_errors
-            return list(self.diagnose())
+            return self.diagnose()
 
     def infer_type(self, error_id: int, mcs_id: int) -> dict[str, Type]:
         tc_error = self.tc_errors[error_id]
@@ -1107,10 +1043,10 @@ class System:
                         new_env = env.with_head(Head.type_of(var_name))
                         self.call_graph.add_closure(env.head.name, var_name, CallGraph.FREE)
                         rid = self.add_rule(T == var_pat, ann, RuleType.Decl, new_env)
-                        self.check_node(rhs, var_pat, new_env.with_parent_rule(rid))
+                        self.check_node(rhs, var_pat, new_env)
 
                         if wheres is not None:
-                            self.check_node(wheres, self.fresh(), new_env.with_parent_rule(rid))
+                            self.check_node(wheres, self.fresh(), new_env)
                     case _:
                         raise NotImplementedError(f"PatBind with {pat.get('tag')} is not supported")
 

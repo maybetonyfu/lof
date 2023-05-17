@@ -4,13 +4,14 @@ from pathlib import Path
 from enum import Enum
 from pydantic import BaseModel
 
-class Kind(Enum):
+class Kind(str, Enum):
     Atom = "Atom"
     Var = "Var"
     Struct = "Struct"
     Array = "Array"
     String = "String"
     StructExtern = "StructExtern"
+
 
 
 class Term(BaseModel):

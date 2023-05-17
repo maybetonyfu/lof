@@ -1,8 +1,6 @@
 class A a where
     f :: a -> a
 
-instance A Int
-
 instance A Float
 
 class (A a) => B a where

@@ -7,6 +7,7 @@
     <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono&display=swap" rel="stylesheet">
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="//unpkg.com/alpinejs" defer></script>
+
     <style>
         .code {
             font-family: "JetBrains Mono", monospace;
@@ -16,11 +17,24 @@
 
     </style>
     <script>
+        const pointInRange = ([x, y], [[fromX, fromY], [toX, toY]]) => {
+            return x >= fromX && x <= toX && y >= fromY && y < toY
+        };
+
         let data = {
-            diagnoses: {{ data.diagnoses_json }}.map(d => JSON.parse(d)),
+            ...JSON.parse(`
+            {{data}}
+            `),
             error_id: 0,
-            cause_id: 0
+            cause_id: 0,
+            pointInCauseLoc(x, y) {
+                if (this.cause_id === null) return false
+                return this.diagnoses[this.error_id].causes[this.cause_id].rules.map(r => r.meta.loc[1]).some(loc => pointInRange([x, y], loc))
+
+            }
         }
+
+
     </script>
 </head>
 
@@ -28,50 +42,78 @@
 <div class="menu-bar h-10 bg-gray-100"></div>
 <div class="main-interface flex" style="height: calc(100vh - 2.5rem)">
     <div class="p-1">
-        {% for file in data.files %}
-        <a href="/editor/{{data.user_id}}/{{file}}"
-           class="h-8 block leading-8 bg-gray-200 my-0.5 px-2 {{ 'bg-gray-400' if file == data.opened_file else ' '}}">{{file}}</a>
-        {% endfor %}
+        <template x-for="f in file_list">
+            <a :href="`/editor/${user_id}/${f}`"
+               :class="f === file && 'bg-gray-400'"
+               class="h-8 block leading-8 bg-gray-200 my-0.5 px-2" x-text="f"></a>
+        </template>
+
     </div>
 
     <div class="h-full overflow-y-auto relative flex-grow">
-        {% if data.text %}
         <div class="highlight absolute">
-            {% for l in range(data.number_of_lines) %}
-            <div class="line h-8 flex">
-                {% for l in range(data.number_of_cols) %}
-                <span class="code h-8 inline-block padding-0 text-white">.</span>
-                {% endfor %}
-            </div>
-            {% endfor %}
+            <template x-for="l in max_line_number">
+                <div class="line h-8 flex">
+                    <template x-for="c in max_col_number">
+                    <span class="code h-8 inline-block padding-0 text-white"
+                          :class="pointInCauseLoc(l, c) && 'bg-blue-300'"
+                    >&nbsp;</span>
+                    </template>
+                </div>
+            </template>
+
         </div>
-        <pre class="code absolute leading-8 outline-none w-full" spellcheck="false" contenteditable="true">{{ data.text }}</pre>
-        {% endif %}
+        <pre class="code absolute leading-8 outline-none w-full"
+             spellcheck="false"
+             contenteditable="true"
+             x-text="atob(text)"></pre>
 
     </div>
 
-    <div class="w-96 p-1 bg-gray-100 h-full overflow-y-auto" >
+    <div class="w-96 p-1 bg-gray-100 h-full overflow-y-auto">
         <div class="flex">
             <template x-for="(diagnosis, e_id) in diagnoses">
-                <div x-text="'Error ' + error_id" @click="error_id = e_id"></div>
+                <div x-text="'Error ' + e_id" @click="error_id = e_id"></div>
             </template>
         </div>
-        <div class="flex flex-col">
-             <template x-if="error_id != null && diagnoses.length != 0">
-                 <div>
-                    <template x-for="(cause, c_id) in diagnoses[error_id].causes">
-                        <div>
-                            <div @click="cause_id = c_id" class="bg-blue-200 cursor-pointer" x-text="'Cause ' + c_id"></div>
+        <div class="flex flex-col p-2">
+            <template x-if="error_id != null && diagnoses.length != 0">
+                <template x-for="(cause, c_id) in diagnoses[error_id].causes">
+                    <div class="my-1">
+                        <div @click="cause_id == c_id ? cause_id = null : cause_id = c_id"
+                             class="cursor-pointer p-1 text-white flex space-between"
+                             :class="cause_id == c_id ?'bg-gray-800' : 'bg-gray-400'"
+                             >
+                            <span class="flex">
+                                <template x-for="rule in cause.rules">
+                                    <div x-text="rule.meta.src_text.value"
+                                         class="text-black px-1 mx-0.5"
+                                         :class="cause_id == c_id ?'bg-blue-200' : 'bg-gray-200'">
+                                    </div>
+                                </template>
+                            </span>
+                            <span x-show="cause_id !== c_id">
+                                <svg fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-6 h-6">
+                                  <path stroke-linecap="round" stroke-linejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" />
+                                </svg>
+                            </span>
+                             <span x-show="cause_id === c_id">
+                                <svg fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-6 h-6">
+                                  <path stroke-linecap="round" stroke-linejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" />
+                                </svg>
+                            </span>
+                        </div>
+                        <div class="bg-white">
                             <template x-if="cause_id == c_id">
-                                 <template x-for="(rule, rule_id) in diagnoses[error_id].causes[cause_id].rules">
-                                     <div x-text="rule.meta.src_text.value">
-                                     </div>
-                                 </template>
+                                <template x-for="rule in cause.rules">
+                                    <div x-text="rule.meta.src_text.value">
+                                    </div>
+                                </template>
                             </template>
                         </div>
-                    </template>
-                 </div>
-             </template>
+                    </div>
+                </template>
+            </template>
         </div>
     </div>
 </div>

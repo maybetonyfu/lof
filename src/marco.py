@@ -18,7 +18,11 @@ class Error(BaseModel):
 
 
 class Marco:
-    def __init__(self, rules: set[int], sat_fun: Callable[[set[int]], bool], parent_relations: list[tuple[int, int]]):
+    def __init__(self, rules: set[int],
+                 sat_fun: Callable[[set[int]], bool],
+                 parent_relations: list[tuple[int, int]],
+                 optimization: bool = True
+                 ):
         self.rules = frozenset(rules)
         self.graph = networkx.Graph()
         self.mus_list: set[frozenset[int]] = set()
@@ -31,6 +35,7 @@ class Marco:
         self.sat_counter = 0
         self.max_loops = 999
         self.sat_fun = sat_fun
+        self.optimization = optimization
 
     def grow(self, seed: frozenset[int]) -> frozenset[int]:
         for c in self.rules - seed:
@@ -105,10 +110,10 @@ class Marco:
 
                 self.mss_list.add(mss)
                 self.solver.add(Or([Bool(r) for r in self.rules if r not in mss]))
-
-                for other_mss in other_msses:
-                    self.mss_list.add(other_mss)
-                    self.solver.add(Or([Bool(r) for r in self.rules if r not in other_mss]))
+                if self.optimization:
+                    for other_mss in other_msses:
+                        self.mss_list.add(other_mss)
+                        self.solver.add(Or([Bool(r) for r in self.rules if r not in other_mss]))
 
 
             else:

@@ -76,15 +76,6 @@ def decode_decl_name(name: str):
     return decode(ident)
 
 
-def adt(con: Term, args: list[Term]) -> Term:
-    def unwrap(terms: list[Term]):
-        if len(terms) == 0:
-            return nil
-        else:
-            return cons(terms[0], unwrap(terms[1:]))
-
-    return struct('adt', cons(con, unwrap(args)))
-
 
 # Special Atoms
 t_unit: Term = atom('unit')
@@ -267,9 +258,49 @@ class Type:
     def __repr__(self):
         return self.__str__()
 
+# a -> b -> c
+#
+# int -> int  -> bool
+#
+# int -> a
+# (-> a b) c
+# maybe int
+# [int]
+# (a, b)
+# a b c
+#
+# [int] => f a
+# maybe int => f a
+# int -> bool => f a
+#
+# adt([tuple, a, b])
+# adt([maybe, int])
+# adt([list, int])
+# adt([a, b, c])
+# adt([function, int, int, bool])
+# adt(function(x))
+# adt(F, int) == function(int, int, int)
+#
+# adt(F, int) == adt(a b int)
+#
+# function(a, b, c) == function(a, X)
+# [function a, function b, c]
+# [function a, X]
+# [list, int]
+
+
+def pair(*terms: Term) -> Term:
+    match len(terms):
+        case 0:
+            raise ValueError("adt needs at least one argument")
+        case 1:
+            return terms[0]
+        case _:
+            return struct('pair', terms[0], pair(*terms[1:]))
+
 
 def list_of(elem: Term) -> Term:
-    return adt(atom('list'), [elem])
+    return pair(atom('list'), elem)
 
 
 def fun_of(*terms: Term):
@@ -279,7 +310,7 @@ def fun_of(*terms: Term):
         case 1:
             return terms[0]
         case _:
-            return adt(atom('function'), [terms[0], fun_of(*terms[1:])])
+            return pair(struct('function', terms[0]), fun_of(*terms[1:]))
 
 
 def tuple_of(*terms: Term):
@@ -289,10 +320,10 @@ def tuple_of(*terms: Term):
         case 1:
             return terms[0]
         case _:
-            return adt(atom('tuple'), [terms[0], tuple_of(*terms[1:])])
+            return pair(struct('tuple', terms[0]),  tuple_of(*terms[1:]))
 
 
-class RuleType(Enum):
+class RuleType(str, Enum):
     Decl = 'Decl'
     Exp = 'Exp'
     Pat = 'Pat'
@@ -307,7 +338,7 @@ class RuleType(Enum):
     TypeClass = "TypeClass"
 
 
-class HeadType(Enum):
+class HeadType(str, Enum):
     TypeOf = "TypeOf"
     InstanceOf = "InstanceOf"
     SynonymOf = "SynonymOf"
@@ -420,7 +451,7 @@ class System:
         project_dir / "bin" / "haskell-parser")
 
     def __init__(self, base_dir: Path, file_id: int, hs_file: Path, module_name: str, ast, prolog_instance,
-                 synonyms: list[str]):
+                 synonyms: list[str], marco_optimization=True):
         self.synonyms: list[str] = synonyms
         self.ast: dict = ast
         self.base_dir: Path = base_dir
@@ -442,6 +473,8 @@ class System:
         self.tc_errors: list[Error] = []
         self.classes: list[TypeClass] = []
         self.call_graph: CallGraph = CallGraph()
+        self.marco_optimization = marco_optimization
+
 
     def reset(self):
         self.__init__(
@@ -556,7 +589,7 @@ class System:
         diagnoses = []
         for error in self.tc_errors:
             causes = []
-            for mcs in  error.mcs_list:
+            for mcs in error.mcs_list:
                 if self.is_most_specific_fix(mcs, error.mcs_list):
                     mcs_rules = [self.rules[rid] for rid in mcs.rules]
                     causes.append(Cause(rules=mcs_rules))
@@ -995,7 +1028,7 @@ class System:
                 [name, *vs_names] = self.get_head_name(head, [])
                 name = name[0].lower() + name[1:]
                 vs = [var('TypeVar_' + v) for v in vs_names]
-                adt_var = atom(name) if len(vs) == 0 else adt(atom(name), vs)
+                adt_var = atom(name) if len(vs) == 0 else pair(atom(name), *vs)
 
                 def get_first_instance_constant(ast):
                     match ast:
@@ -1240,18 +1273,18 @@ class System:
                 v_pat = self.bind(env.head.name)
                 self.check_node(exp, v_exp, env)
                 monad_var = self.bind(env.head.name)
-                self.add_ambient_rule(struct('adt', cons(monad_var, wildcard)) == term, env)
+                self.add_ambient_rule(pair(monad_var, wildcard) == term, env)
 
                 self.add_ambient_rule(
-                    adt(monad_var, [v_pat]) == v_exp, env)
+                    pair(monad_var, v_pat) == v_exp, env)
                 self.check_node(pat, v_pat, env)
 
             case {'tag': 'Qualifier', 'contents': [ann, exp]}:
                 v_exp = self.bind(env.head.name)
                 self.check_node(exp, v_exp, env)
                 monad_var = self.bind(env.head.name)
-                self.add_ambient_rule(struct('adt', cons(monad_var, wildcard)) == term, env)
-                self.add_ambient_rule(struct('adt', cons(monad_var, wildcard)) == v_exp, env)
+                self.add_ambient_rule(pair(monad_var, wildcard) == term, env)
+                self.add_ambient_rule(pair(monad_var, wildcard) == v_exp, env)
 
             case {'tag': 'LetStmt', 'contents': [ann, exp]}:
                 raise NotImplementedError("LetStmt")
@@ -1305,18 +1338,23 @@ class System:
                     for type_part, v in zip(items, vs):
                         self.check_node(type_part, v, env)
                 else:
-                    def flatten_type_app(node: dict) -> list[dict]:
-                        if node['tag'] == 'TyApp':
-                            return flatten_type_app(node['contents'][1]) + [node['contents'][2]]
-                        else:
-                            return [node]
+                    [v1, v2] = self.bind_n(2, env.head.name)
+                    self.add_ambient_rule(term == pair(v1, v2), env)
+                    self.check_node(t1, v1, env)
+                    self.check_node(t2, v2, env)
 
-                    nodes: list[dict] = flatten_type_app(node)
+                    # def flatten_type_app(node: dict) -> list[dict]:
+                    #     if node['tag'] == 'TyApp':
+                    #         return flatten_type_app(node['contents'][1]) + [node['contents'][2]]
+                    #     else:
+                    #         return [node]
+                    #
+                    # nodes: list[dict] = flatten_type_app(node)
 
-                    vs = self.bind_n(len(nodes), env.head.name)
-                    self.add_ambient_rule(term == adt(vs[0], vs[1:]), env)
-                    for node, v in zip(nodes, vs):
-                        self.check_node(node, v, env)
+                    # vs = self.bind_n(len(nodes), env.head.name)
+                    # self.add_ambient_rule(term == adt(vs[0], vs[1:]), env)
+                    # for node, v in zip(nodes, vs):
+                    #     self.check_node(node, v, env)
 
             case {'tag': 'TyFun', 'contents': [ann, t1, t2]}:
                 [var1, var2] = self.bind_n(2, env.head.name)

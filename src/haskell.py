@@ -4,11 +4,10 @@ from enum import Enum
 from itertools import chain
 from subprocess import run
 import ujson
-from typing import Any, TypeAlias, Iterator, cast
-from airium import Airium
+from typing import Any, TypeAlias
 from src.encoder import encode, decode
 from string import ascii_lowercase
-from src.prolog import Prolog, Term, atom, var, struct, Clause, PlInterface, cons, nil, Kind, wildcard, \
+from src.prolog import Prolog, Term, atom, var, struct, Clause, PlInterface, Kind, wildcard, \
     prolog_list_to_list, struct_extern, unify
 from src.maybe import Maybe, nothing, just
 from src.marco import Marco, Error, RuleSet
@@ -469,6 +468,7 @@ class System:
         self.lambda_counter: int = 0
         self.node_counter: int = 0
         self.free_vars: dict[str, list[Term]] = defaultdict(list)  # (head, Intermediate variables).
+        self.skolem_vars: dict[str, set[tuple[str, str]]] = defaultdict(set)
         self.rules: list[Rule] = []
         self.tc_errors: list[Error] = []
         self.classes: list[TypeClass] = []
@@ -756,6 +756,14 @@ class System:
                 caller,
                 set()
             )
+
+
+        for head, skolem_vars in self.skolem_vars.items():
+            result = {}
+
+            for type_var, internal_var in skolem_vars:
+                result[type_var] = var(internal_var)
+            self.prolog.add_query(struct('alldif', Term.array(*result.values())))
 
     def marshal(self):
         self.file_content = self.hs_file_path.read_text()
@@ -1375,7 +1383,11 @@ class System:
 
             case {'tag': 'TyVar', 'contents': [ann, name]}:
                 var_name = name['contents'][1]
+                v = self.bind(env.head.name)
+                self.add_ambient_rule(v == var('TypeVar_' + var_name), env)
                 self.add_ambient_rule(term == var('TypeVar_' + var_name), env)
+                if env.head.type == HeadType.TypeOf:
+                    self.skolem_vars[env.head.name].add((var_name, v.value))
 
             case {'tag': 'TyParen', 'contents': [_, ty]}:
                 self.check_node(ty, term, env)
@@ -1458,7 +1470,7 @@ class System:
 
 
 if __name__ == "__main__":
-    to_check_file = "Test.hs"
+    to_check_file = "zipWith.hs"
     project_dir = Path(__file__).parent.parent
     base_dir = Path(__file__).parent.parent / "tmp" / "test"
     parser_bin = str(project_dir / "bin" / "haskell-parser.exe") if platform() == 'Windows' else str(

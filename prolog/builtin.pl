@@ -1,6 +1,10 @@
 :- module(hs_builtin, [type_of_SYMcn/2,type_of__hsmd_Builtin_hsmd_error/2,member1/2, alldif/1]).
 
-type_of_SYMcn(T, _) :-T = pair(function(a), pair(function(pair(list, a)), pair(list, a))).
+type_of_SYMcn(T, _) :-
+    T = pair(function(A), B),
+    B = pair(function(C), D),
+    C = pair(list, A),
+    D = pair(list, A).
 
 type_of__hsmd_Builtin_hsmd_error(_, _).
 

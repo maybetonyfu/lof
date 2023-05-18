@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <title>Goanna</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono&display=swap" rel="stylesheet">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="//unpkg.com/alpinejs" defer></script>
+
+    <style>
+        .code {
+            font-family: "JetBrains Mono", monospace;
+            font-variant-ligatures: none;
+            font-kerning: none;
+        }
+
+    </style>
+    <script>
+
+        let data = {
+            ...JSON.parse(`
+            {{data}}
+            `)
+        }
+
+
+    </script>
+</head>
+
+<body class="flex flex-col h-screen" x-data="data">
+<div class="menu-bar h-10 bg-gray-100"></div>
+<div class="main-interface flex" style="height: calc(100vh - 2.5rem)">
+    <div class="p-1">
+        <template x-for="f in file_list">
+            <a :href="`/editor/${user_id}/${f}`"
+               class="h-8 block leading-8 bg-gray-200 my-0.5 px-2" x-text="f"></a>
+        </template>
+
+    </div>
+
+    <div class="h-full overflow-y-auto relative flex-grow">
+    </div>
+
+    <div class="w-96 p-1 bg-gray-100 h-full overflow-y-auto">
+    </div>
+</div>
+</body>
+</html>

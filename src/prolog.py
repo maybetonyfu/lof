@@ -11,7 +11,7 @@ class Kind(str, Enum):
     Array = "Array"
     String = "String"
     StructExtern = "StructExtern"
-
+    Combined = "Combined"
 
 
 class Term(BaseModel):
@@ -27,6 +27,10 @@ class Term(BaseModel):
     def atom(cls, name: str):
         assert is_prolog_atom(name)
         return cls(value=name, kind=Kind.Atom)
+
+    @classmethod
+    def combined(cls, term1: 'Term', term2: 'Term'):
+        return cls(kind=Kind.Combined, value=[term1, term2])
 
     @classmethod
     def var(cls, name):
@@ -55,6 +59,8 @@ class Term(BaseModel):
     def __str__(self):
         if self.kind == Kind.String:
             return f"'{self.value}'"
+        if self.kind == Kind.Combined:
+            return f'({",".join([v.__str__() for v in self.value])})'
         elif self.kind == Kind.StructExtern:
             return f"{self.value['module']}:{json_to_prolog(self.value)}"
         else:
@@ -70,6 +76,7 @@ class Term(BaseModel):
 var = Term.var
 atom = Term.atom
 struct = Term.struct
+combined = Term.combined
 struct_extern = Term.struct_extern
 array = Term.array
 succeed = atom('true')
@@ -198,9 +205,12 @@ class Prolog(ContextDecorator):
             else:
                 raise e
 
+
+
     def rerun(self) -> bool | list[bool | dict]:
-        consult_query = ','.join(['make,'] +
-                                 ['once((' + ','.join([q.__str__() for q in self.queries]) + '))']
+        consult_query = ','.join(
+                                ['make'] +
+                                ['once((' + ','.join([q.__str__() for q in self.queries]) + '))']
                                  )
         try:
             result = self.prolog_thread.query(consult_query)
@@ -219,15 +229,11 @@ class Prolog(ContextDecorator):
 
 
 if __name__ == "__main__":
-    with Prolog(interface=PlInterface.File, file=Path('C:/Users/sfuu0016/Projects/lof/tmp/test/Test.pl')) as prolog:
-        print(prolog.file.read_text())
+    with Prolog(interface=PlInterface.File, file=Path('/Users/tony.f/Projects/lof/tmp/test/Test.pl')) as prolog:
         try:
             r = prolog.run_raw_query(f'''
-set_prolog_flag(occurs_check, error),
-consult('C:/Users/sfuu0016/Projects/lof/tmp/test/Test.pl'),
-findall(PredicateIndicator, current_predicate(_, PredicateIndicator), Predicates),
-maplist(export_predicate, Predicates),
-foo(X).
+            assert(main :- once(a = b)),
+            main.
 ''')
             print(r)
         except Exception as e:

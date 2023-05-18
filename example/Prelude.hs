@@ -9,14 +9,7 @@ length = undefined
 id :: a -> a
 id = undefined
 
-(+) :: Int -> Int -> Int
-(+) = undefined
 
-(-) :: Int -> Int -> Int
-(-) = undefined
-
-(*) :: Int -> Int -> Int
-(*) = undefined
 
 data Bool = True | False
 data IO a = IO a
@@ -98,11 +91,13 @@ foldl = undefined
 head :: [a] -> a
 head = undefined
 
+tail :: [a] -> [a]
+tail = undefined
+
 zipWith :: (a->b->c) -> [a] -> [b] -> [c]
 zipWith = undefined
 
-mod :: Int -> Int -> Int
-mod = undefined
+
 
 fst :: (a,b) -> a
 fst = undefined
@@ -116,5 +111,61 @@ snd = undefined
 pi :: Float
 pi = 3.14
 
-sum :: [Float] -> Float
-sum = undefined 
+
+not :: Bool -> Bool
+not = undefined
+
+class Monoid a where
+  mconcat :: [a] -> a
+  mappend :: a -> a -> a
+  mempty :: a
+
+instance Monoid [a]
+
+const  :: a -> b -> a
+const = undefined
+
+
+reverse :: [a] -> [a]
+reverse = undefined
+
+(||) :: Bool -> Bool -> Bool
+(||) = undefined
+
+(&&) :: Bool -> Bool -> Bool
+(&&) = undefined
+
+elem :: a -> [a] -> Bool
+elem = undefined
+
+even :: Int -> Bool
+even = undefined
+
+odd  :: Int -> Bool
+odd = undefined
+
+class Num a where
+    (+) :: a -> a -> a
+    (-) :: a -> a -> a
+    (*) :: a -> a -> a
+
+instance Num Int
+instance Num Float
+
+sum :: Num a => [a] -> a
+sum = undefined
+
+mod :: Int -> Int -> Int
+mod = undefined
+
+class Enum a where
+    enumFrom :: a -> [a]
+
+instance Enum Int
+instance Enum Char
+
+any :: [Bool] -> Bool
+any = undefined
+
+and :: [Bool] -> Bool
+and = undefined

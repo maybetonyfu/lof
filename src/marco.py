@@ -1,3 +1,5 @@
+from random import shuffle
+import time
 from z3 import *
 from typing import Optional, Callable
 import networkx
@@ -38,24 +40,26 @@ class Marco:
         self.optimization = optimization
 
     def grow(self, seed: frozenset[int]) -> frozenset[int]:
-        for c in self.rules - seed:
+        # print('growing')
+        for c in (self.rules - seed):
             if self.sat(seed | {c}):
                 seed = seed | {c}
 
         return seed
 
     def shrink(self, seed: frozenset[int]) -> frozenset[int]:
+        # print('shrinking ', seed)
         for c in seed:
             if not self.sat(seed - {c}):
                 seed = seed - {c}
 
         return seed
 
-    def get_other_msses(self, mss: frozenset[int]) -> set[frozenset[int]]:
+    def get_other_msses(self, mcs: frozenset[int]) -> set[frozenset[int]]:
         # if relation holds: parent_child(p1, p2), and P - ({p2} + C) is MSS, and pi
         # then P - ({p1) + C) + {pi . parent_child(p1, pi}
+        # print('getting other mss')
         alternatives = []
-        mcs = self.rules - mss
         for rule in mcs:
             replacers = [rule]
             for parent, child in self.parent_relations:
@@ -74,10 +78,22 @@ class Marco:
                 elif (comb[1], comb[0]) in self.parent_relations:
                     removed.remove(comb[0])
             remove_parent_child.add(frozenset(removed))
-        # print('for set ', mcs, ' \nthe muses are generated: ', remove_parent_child - {mcs} )
+
+
+        new_mcses = remove_parent_child - {mcs}
+        return new_mcses
+        # if len(new_mcses) == 0:
+        #     return set()
+        # else:
+        #     new_mcses_ = [new_mcses]
+        #     for new_mcs in new_mcses:
+        #         new_mcses_.append(self.get_other_msses(new_mcs))
+        #     new_new_mcses = set().union(*new_mcses_)
+        #     print('for set ', mcs, ' \nthe new mcses are generated: ', new_mcses)
+        #     print('for set ', mcs, ' \nthe new new mcses are generated: ', new_new_mcses)
+        #     return set().union(*new_mcses_)
 
         # return [set(s) for s in combination_sets if s != frozenset(mus)]
-        return {self.rules - new_mcs for new_mcs in remove_parent_child}
     def get_unexplored(self, model: ModelRef) -> frozenset[int]:
         seeds = []
         for rid in self.rules:
@@ -97,6 +113,7 @@ class Marco:
         return self.sat_fun(set(rules))
 
     def run(self):
+        print('start marco', time.time())
         successful, model = self.is_satisfiable()
         while successful:
             if self.loop_counter >= self.max_loops:
@@ -106,14 +123,13 @@ class Marco:
             seed = self.get_unexplored(model)
             if self.sat(seed):
                 mss = self.grow(seed)
-                other_msses = self.get_other_msses(mss)
 
                 self.mss_list.add(mss)
                 self.solver.add(Or([Bool(r) for r in self.rules if r not in mss]))
                 if self.optimization:
-                    for other_mss in other_msses:
-                        self.mss_list.add(other_mss)
-                        self.solver.add(Or([Bool(r) for r in self.rules if r not in other_mss]))
+                    other_mcses = self.get_other_msses(self.rules - mss)
+                    for other_mcs in other_mcses:
+                        self.solver.add(Or([Bool(r) for r in self.rules if r in other_mcs]))
 
 
             else:
@@ -122,11 +138,12 @@ class Marco:
                 self.solver.add(Not(And([Bool(r) for r in mus])))
 
             successful, model = self.is_satisfiable()
-        print('finished after ', self.sat_counter, ' runs')
+        print('finished after ', self.sat_counter, ' runs', time.time())
 
     def analyse(self):
         mcs_counter = 0
         # Populate mcs list
+        print('start analysis', time.time())
         for mss in self.mss_list:
             self.mcs_list.add(self.rules - mss)
 
@@ -138,8 +155,9 @@ class Marco:
             index2, mus2 = combination[1]
             if mus1 & mus2 != set():
                 self.graph.add_edge(index1, index2)
-
+        print('finish building graph', time.time())
         for i, component in enumerate(networkx.connected_components(self.graph)):
+
             mus_list = [mus_index_list[musId][1] for musId in component]
             mcs_list = []
             mss_list = []
@@ -157,6 +175,7 @@ class Marco:
 
             mus_ruleset = [RuleSet(setId=musId, rules=set(mus)) for musId, mus in enumerate(mus_list)]
             self.tc_errors.append(Error(error_id=i, mus_list=mus_ruleset, mcs_list=mcs_list, mss_list=mss_list))
+        print('finish analysis', time.time())
 
     def show(self):
         print(f"Process finished after {self.loop_counter} iterations")

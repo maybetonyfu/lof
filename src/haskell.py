@@ -5,10 +5,10 @@ from itertools import chain
 from subprocess import run
 import ujson
 from typing import Any, TypeAlias
-from src.encoder import encode, decode
+from src.encoder import encode, decode, str_to_b64
 from string import ascii_lowercase
 from src.prolog import Prolog, Term, atom, var, struct, Clause, PlInterface, Kind, wildcard, \
-    prolog_list_to_list, struct_extern, unify
+    prolog_list_to_list, struct_extern, unify, combined
 from src.maybe import Maybe, nothing, just
 from src.marco import Marco, Error, RuleSet
 from pydantic import BaseModel
@@ -532,7 +532,7 @@ class System:
         from_col = span[0][1] - 1
         to_col = span[1][1] - 1
         loc = (file, span)
-        src_text = just(self.file_content.splitlines()[from_line][from_col:to_col])  # Remove the just() call
+        src_text = just(str_to_b64(self.file_content.splitlines()[from_line][from_col:to_col]))  # Remove the just() call
         self.rules.append(
             Rule(
                 body=body,
@@ -562,6 +562,7 @@ class System:
 
 
     def is_most_specific_fix(self, mcs: RuleSet, all_mcs: list[RuleSet]) -> bool:
+        # return True
         def is_ancester(rule1: Rule, rule2: Rule) -> bool:
             if rule1.rid == rule2.rid:
                 return True
@@ -587,6 +588,7 @@ class System:
 
     def diagnose(self) -> list[Diagnosis]:
         diagnoses = []
+        print('begin diagnosis')
         for error in self.tc_errors:
             causes = []
             for mcs in error.mcs_list:
@@ -596,10 +598,22 @@ class System:
 
             locs = list(chain(*[[r.meta.loc for r in cause.rules] for cause in causes]))
             diagnoses.append(Diagnosis(causes=causes, locs=locs))
+        print('finsih diagnosis')
         return diagnoses
 
     def solve_bool(self, rules: set[int]) -> bool:
         return self.solve(rules) is not False
+
+
+    def solve_rerun(self, rules: set[int]) -> bool:
+        self.prolog.reset()
+        self.generate_type_classes()
+        self.generate_typing_clauses(rules)
+        self.generate_type_synonym_clauses({r.rid for r in self.rules})
+        self.generate_instance_clauses(rules)
+        self.prolog.generate_file()
+        self.generate_goals()
+        return self.prolog.rerun()
 
     def generate_only(self):
         self.prolog.reset()
@@ -701,12 +715,16 @@ class System:
                 callees: set[tuple[str, str]],
                 self_var: Term,
                 original_caller: str,
-                seen: set[str]
+                seen: frozenset[str]
         ):
             if caller_ in seen:
+                if original_caller == caller_:
+                    self.prolog.add_query(var('_' + original_caller) == self_var)
+                # print('Seen  ', original_caller, caller_, self_var)
                 return
             else:
-                seen.add(caller_)
+                # print('Unseen', original_caller, caller_, self_var)
+                new_seen = frozenset({*seen, caller_})
                 var_lookup = {}
 
                 def replace_free_var(v: Term) -> Term:
@@ -741,7 +759,7 @@ class System:
                             self.call_graph.graph[callee],
                             replace_free_var(var(alias)),
                             original_caller,
-                            seen.copy()
+                            new_seen
                         )
                     else:
                         self.prolog.add_query(
@@ -754,7 +772,7 @@ class System:
                 self.call_graph.graph[caller],
                 var('_' + caller),
                 caller,
-                set()
+                frozenset()
             )
 
 
@@ -1083,7 +1101,8 @@ class System:
                         var_pat = self.bind(var_name)
                         new_env = env.with_head(Head.type_of(var_name))
                         self.call_graph.add_closure(env.head.name, var_name, CallGraph.FREE)
-                        rid = self.add_rule(T == var_pat, ann, RuleType.Decl, new_env)
+                        # rid = self.add_rule(T == var_pat, ann, RuleType.Decl, new_env)
+                        self.add_ambient_rule(T == var_pat, new_env)
                         self.check_node(rhs, var_pat, new_env)
 
                         if wheres is not None:
@@ -1096,12 +1115,13 @@ class System:
                 fun_name = combine_module_ident(self.current_module_name, self.get_name(f_name, env.toplevel))
                 var_args = self.bind_n(len(f_args), fun_name)
                 var_rhs = self.bind(fun_name)
-                var_fun = self.bind(fun_name)
+                # var_fun = self.bind(fun_name)
                 self.call_graph.add_closure(env.head.name, fun_name, CallGraph.FREE)
                 new_env = env.with_head(Head.type_of(fun_name))
-                rid = self.add_rule(T == var_fun, ann, RuleType.Decl, new_env)
-                self.add_ambient_rule(var_fun == fun_of(*var_args, var_rhs), new_env)
-                new_env = new_env.with_parent_rule(rid)
+                # rid = self.add_rule(T == var_fun, ann, RuleType.Decl, new_env)
+                # self.add_rule(T == var_fun, ann, RuleType.Decl, new_env)
+                self.add_ambient_rule(T == fun_of(*var_args, var_rhs), new_env)
+                # new_env = new_env.with_parent_rule(rid)
                 for match in matches:
                     [ann, _, args, rhs, wheres] = match['contents']
                     for arg, var_arg in zip(args, var_args):
@@ -1184,11 +1204,11 @@ class System:
 
             case {'tag': 'App', 'contents': [ann, exp1, exp2]}:
                 [var1, var2, var_result] = self.bind_n(3, env.head.name)
-                self.add_ambient_rule(term == var_result, env)
-                # self.add_ambient_rule(var1 == fun_of(var2, term), head)
-                rid = self.add_rule(var1 == fun_of(var2, term), ann, RuleType.App, env)
-                self.check_node(exp1, var1, env.with_parent_rule(rid))
-                self.check_node(exp2, var2, env.with_parent_rule(rid))
+                # self.add_ambient_rule(term == var_result, env)
+                self.add_ambient_rule(var1 == fun_of(var2, term), env)
+                # rid = self.add_rule(var1 == fun_of(var2, term), ann, RuleType.App, env)
+                self.check_node(exp1, var1, env)
+                self.check_node(exp2, var2, env)
 
             case {'tag': 'RightSection', 'contents': [ann, op, right]}:
                 [v_op, v_left, v_right, v_result] = self.bind_n(4, env.head.name)
@@ -1275,6 +1295,34 @@ class System:
                 for exp in exps:
                     self.check_node(exp, elem_var, env.with_parent_rule(rid))
 
+            case {'tag': 'EnumFrom', 'contents': [ann, exp]}:
+                v = self.bind(env.head.name)
+                rid = self.add_rule(
+                    combined(
+                        term == list_of(v),
+                        require_class('Enum', v, wildcard)
+
+                    ), ann, RuleType.Lit, env)
+                self.check_node(exp, v, env.with_parent_rule(rid))
+
+            case {'tag': 'EnumTo', 'contents': [ann, exp]}:
+                v = self.bind(env.head.name)
+                rid = self.add_rule(
+                    combined(
+                        term == list_of(v),
+                        require_class('Enum', v, wildcard)
+                    ), ann, RuleType.Lit, env)
+                self.check_node(exp, v, env.with_parent_rule(rid))
+
+            case {'tag': 'EnumFromTo', 'contents': [ann, exp1, exp2]}:
+                v1, v2 = self.bind_n(2, env.head.name)
+                rid = self.add_rule(
+                    combined(term == list_of(v1), require_class('Enum', v1, wildcard))
+                    , ann, RuleType.Lit, env)
+                self.add_ambient_rule(unify(v1, v2), env)
+                self.check_node(exp1, v1, env.with_parent_rule(rid))
+                self.check_node(exp2, v2, env.with_parent_rule(rid))
+
             # Statements
             case {'tag': 'Generator', 'contents': [ann, pat, exp]}:
                 v_exp = self.bind(env.head.name)
@@ -1282,7 +1330,6 @@ class System:
                 self.check_node(exp, v_exp, env)
                 monad_var = self.bind(env.head.name)
                 self.add_ambient_rule(pair(monad_var, wildcard) == term, env)
-
                 self.add_ambient_rule(
                     pair(monad_var, v_pat) == v_exp, env)
                 self.check_node(pat, v_pat, env)
@@ -1305,6 +1352,7 @@ class System:
                 self.add_rule(term == list_of(t_char), ann, RuleType.Lit, env)
 
             case {'tag': 'Int', 'contents': [ann, _, _]}:
+                v = self.bind(env.head.name)
                 self.add_rule(term == t_int, ann, RuleType.Lit, env)
 
             case {'tag': 'Frac', 'contents': [ann, _, _]}:
@@ -1350,19 +1398,6 @@ class System:
                     self.add_ambient_rule(term == pair(v1, v2), env)
                     self.check_node(t1, v1, env)
                     self.check_node(t2, v2, env)
-
-                    # def flatten_type_app(node: dict) -> list[dict]:
-                    #     if node['tag'] == 'TyApp':
-                    #         return flatten_type_app(node['contents'][1]) + [node['contents'][2]]
-                    #     else:
-                    #         return [node]
-                    #
-                    # nodes: list[dict] = flatten_type_app(node)
-
-                    # vs = self.bind_n(len(nodes), env.head.name)
-                    # self.add_ambient_rule(term == adt(vs[0], vs[1:]), env)
-                    # for node, v in zip(nodes, vs):
-                    #     self.check_node(node, v, env)
 
             case {'tag': 'TyFun', 'contents': [ann, t1, t2]}:
                 [var1, var2] = self.bind_n(2, env.head.name)
@@ -1469,10 +1504,8 @@ class System:
                 raise NotImplementedError
 
 
-if __name__ == "__main__":
-    to_check_file = "zipWith.hs"
+def check_haskell_project(to_check_file: str, base_dir: Path):
     project_dir = Path(__file__).parent.parent
-    base_dir = Path(__file__).parent.parent / "tmp" / "test"
     parser_bin = str(project_dir / "bin" / "haskell-parser.exe") if platform() == 'Windows' else str(
         project_dir / "bin" / "haskell-parser")
     result = run(f'{parser_bin} {base_dir}', shell=True, check=True, capture_output=True)
@@ -1480,7 +1513,6 @@ if __name__ == "__main__":
     synonyms = list(chain(*[gather_type_synonym(r['ast']) for r in parsed_data['contents']]))
     call_graphs = {}
     free_vars = {}
-    type_alias = {}
     for file_id, parse_result in enumerate(parsed_data['contents']):
         ast = parse_result['ast']
         file = parse_result['file']
@@ -1516,6 +1548,61 @@ if __name__ == "__main__":
                     module_name=module_name,
                     prolog_instance=prolog,
                     synonyms=synonyms
+                )
+                system.marshal()
+                system.call_graph.graph.update(call_graphs)
+                system.free_vars.update(free_vars)
+                system.generate_only()
+                return system.type_check()
+
+if __name__ == "__main__":
+    to_check_file = "Test.hs"
+    project_dir = Path(__file__).parent.parent
+    base_dir = Path(__file__).parent.parent / "tmp" / "test"
+    parser_bin = str(project_dir / "bin" / "haskell-parser.exe") if platform() == 'Windows' else str(
+        project_dir / "bin" / "haskell-parser")
+    result = run(f'{parser_bin} {base_dir}', shell=True, check=True, capture_output=True)
+    parsed_data = ujson.loads(result.stdout)
+    synonyms = list(chain(*[gather_type_synonym(r['ast']) for r in parsed_data['contents']]))
+    call_graphs = {}
+    free_vars = {}
+    type_alias = {}
+    for file_id, parse_result in enumerate(parsed_data['contents']):
+        ast = parse_result['ast']
+        file = parse_result['file']
+        module_name = parse_result['moduleName']
+        prolog_file = file[:-3] + '.pl'
+        with Prolog(interface=PlInterface.File, file=base_dir / prolog_file) as prolog:
+            system = System(
+                base_dir=base_dir,
+                synonyms=synonyms,
+                ast=ast,
+                file_id=file_id,
+                hs_file=base_dir / file,
+                module_name=module_name,
+                prolog_instance=prolog
+            )
+            system.marshal()
+            system.generate_only()
+            call_graphs.update(system.call_graph.graph)
+            free_vars.update(system.free_vars)
+
+    for file_id, parse_result in enumerate(parsed_data['contents']):
+        ast = parse_result['ast']
+        file = parse_result['file']
+        module_name = parse_result['moduleName']
+        if file == to_check_file:
+            print(f'--- {file} ---')
+            prolog_file = file[:-3] + '.pl'
+            with Prolog(interface=PlInterface.File, file=base_dir / prolog_file) as prolog:
+                system = System(
+                    base_dir=base_dir,
+                    ast=ast,
+                    file_id=file_id,
+                    hs_file=base_dir / file,
+                    module_name=module_name,
+                    prolog_instance=prolog,
+                    synonyms=synonyms,
                 )
                 system.marshal()
                 system.call_graph.graph.update(call_graphs)

@@ -1,3 +1,5 @@
+import base64
+
 symbol_to_name = {
     '+': 'SYMpl',
     '-': 'SYMmn',
@@ -72,6 +74,13 @@ def decode(text: str) -> str:
             output = output + input[0]
             input = input[1:]
     return output
+
+
+def str_to_b64 (input : str) -> str:
+    return base64.b64encode(input.encode()).decode('utf-8')
+
+def b64_toStr (input: str) -> str:
+    return base64.b64decode(input.encode()).decode('utf-8')
 
 if __name__ == '__main__':
     print(

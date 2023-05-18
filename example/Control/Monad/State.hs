@@ -8,4 +8,7 @@ get = undefined
 put :: s -> State s ()
 put = undefined
 
+modify :: (s -> s) -> State s ()
+modify = undefined
+
 instance Monad (State s)

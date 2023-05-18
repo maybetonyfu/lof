@@ -20,7 +20,6 @@
         const pointInRange = ([x, y], [[fromX, fromY], [toX, toY]]) => {
             return x >= fromX && x <= toX && y >= fromY && y < toY
         };
-
         let data = {
             ...JSON.parse(`
             {{data}}
@@ -29,6 +28,7 @@
             cause_id: 0,
             pointInCauseLoc(x, y) {
                 if (this.cause_id === null) return false
+                if (this.diagnoses.length === 0) return false
                 return this.diagnoses[this.error_id].causes[this.cause_id].rules.map(r => r.meta.loc[1]).some(loc => pointInRange([x, y], loc))
 
             }
@@ -39,7 +39,10 @@
 </head>
 
 <body class="flex flex-col h-screen" x-data="data">
-<div class="menu-bar h-10 bg-gray-100"></div>
+<div class="menu-bar h-10 bg-gray-100">
+    <a >Save</a>
+</div>
+
 <div class="main-interface flex" style="height: calc(100vh - 2.5rem)">
     <div class="p-1">
         <template x-for="f in file_list">
@@ -55,7 +58,7 @@
             <template x-for="l in max_line_number">
                 <div class="line h-8 flex">
                     <template x-for="c in max_col_number">
-                    <span class="code h-8 inline-block padding-0 text-white"
+                    <span class="code h-6 inline-block text-white my-1"
                           :class="pointInCauseLoc(l, c) && 'bg-blue-300'"
                     >&nbsp;</span>
                     </template>
@@ -71,9 +74,12 @@
     </div>
 
     <div class="w-96 p-1 bg-gray-100 h-full overflow-y-auto">
-        <div class="flex">
+        <div class="flex p-2">
             <template x-for="(diagnosis, e_id) in diagnoses">
-                <div x-text="'Error ' + e_id" @click="error_id = e_id"></div>
+                <div x-text="'Error ' + (e_id + 1)" class="mr-4 cursor-pointer text-gray-500"
+                     @click="error_id = e_id"
+                    :class="error_id === e_id && 'text-indigo-800'"
+                ></div>
             </template>
         </div>
         <div class="flex flex-col p-2">
@@ -86,7 +92,7 @@
                              >
                             <span class="flex">
                                 <template x-for="rule in cause.rules">
-                                    <div x-text="rule.meta.src_text.value"
+                                    <div x-text="atob(rule.meta.src_text.value)"
                                          class="text-black px-1 mx-0.5"
                                          :class="cause_id == c_id ?'bg-blue-200' : 'bg-gray-200'">
                                     </div>
@@ -106,7 +112,7 @@
                         <div class="bg-white">
                             <template x-if="cause_id == c_id">
                                 <template x-for="rule in cause.rules">
-                                    <div x-text="rule.meta.src_text.value">
+                                    <div x-text="atob(rule.meta.src_text.value)">
                                     </div>
                                 </template>
                             </template>

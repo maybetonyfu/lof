@@ -16,6 +16,12 @@ env = Environment(loader=file_loader)
 project_dir = Path(__file__).parent.parent
 source_dir = project_dir / "example"
 
+built_in_files = [
+    "Prelude.hs",
+    "Data/List.hs",
+    "Data/Maybe.hs",
+    "Control/Monad/State.hs"
+]
 
 def list_files(destination_dir: Path) -> list[str]:
     if not destination_dir.exists():
@@ -29,6 +35,7 @@ def list_files(destination_dir: Path) -> list[str]:
 class ResponseBase(BaseModel):
     user_id: str
     file_list: list[str]
+    built_in_files: list[str]
 
 
 class Response(ResponseBase):
@@ -46,7 +53,8 @@ async def list_file(user_id: str):
 
     response = ResponseBase(
         user_id=user_id,
-        file_list=file_list
+        file_list=file_list,
+        built_in_files=built_in_files
     )
     return env.get_template('list_files_only.html').render(
         data=response.json())
@@ -68,7 +76,8 @@ async def save_file(user_id: str, file_path: str, text: str = Body()):
         max_line_number=number_of_lines,
         max_col_number=number_of_cols,
         file=file_path,
-        file_list=file_list
+        file_list=file_list,
+        built_in_files=built_in_files
     )
     return env.get_template('start.html').render(
         data=response.json())
@@ -91,6 +100,7 @@ async def editor(user_id: str, file_path: str):
         max_line_number=number_of_lines,
         max_col_number=number_of_cols,
         file=file_path,
-        file_list=file_list
+        file_list=file_list,
+        built_in_files=built_in_files
     )
     return env.get_template('start.html').render(data=response.json())

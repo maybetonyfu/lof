@@ -74,12 +74,18 @@
     </div>
 
     <div class="w-96 p-1 bg-gray-100 h-full overflow-y-auto">
-        <div class="flex p-2">
+        <div class="error-selector flex p-2">
             <template x-for="(diagnosis, e_id) in diagnoses">
                 <div x-text="'Error ' + (e_id + 1)" class="mr-4 cursor-pointer text-gray-500"
                      @click="error_id = e_id"
                     :class="error_id === e_id && 'text-indigo-800'"
                 ></div>
+            </template>
+        </div>
+        <div class="error-description p-2">
+            Goanna cannot assign type for the following expressions:
+            <template x-for="name in diagnoses[error_id].names">
+                <span x-text="name" class="mx-1"></span>
             </template>
         </div>
         <div class="flex flex-col p-2">
@@ -111,8 +117,8 @@
                         </div>
                         <div class="bg-white">
                             <template x-if="cause_id == c_id">
-                                <template x-for="rule in cause.rules">
-                                    <div x-text="atob(rule.meta.src_text.value)">
+                                <template x-for="explain in cause.explains">
+                                    <div x-text="explain">
                                     </div>
                                 </template>
                             </template>

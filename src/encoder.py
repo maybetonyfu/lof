@@ -62,6 +62,17 @@ def encode_char(char: str) -> str:
 def encode(text: str) -> str:
     return ''.join([encode_char(c) for c in text])
 
+def de_module(name:  str) -> str:
+    if name.startswith('_hsmd_'):
+        return name.split('_hsmd_')[-1]
+    else:
+        return name
+def de_location(name: str) -> str:
+    parts = name.split('_')
+    if len(parts) < 3:
+        return name
+    else:
+        return '_'.join(name.split('_')[:-2])
 
 def decode(text: str) -> str:
     input = text
@@ -79,7 +90,7 @@ def decode(text: str) -> str:
 def str_to_b64 (input : str) -> str:
     return base64.b64encode(input.encode()).decode('utf-8')
 
-def b64_toStr (input: str) -> str:
+def b64_to_str (input: str) -> str:
     return base64.b64decode(input.encode()).decode('utf-8')
 
 if __name__ == '__main__':

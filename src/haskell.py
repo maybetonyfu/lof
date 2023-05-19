@@ -5,7 +5,7 @@ from itertools import chain
 from subprocess import run
 import ujson
 from typing import Any, TypeAlias
-from src.encoder import encode, decode, str_to_b64
+from src.encoder import encode, decode, str_to_b64, b64_to_str, de_location, de_module
 from string import ascii_lowercase
 from src.prolog import Prolog, Term, atom, var, struct, Clause, PlInterface, Kind, wildcard, \
     prolog_list_to_list, struct_extern, unify, combined
@@ -151,10 +151,46 @@ class CallGraph:
         for parent, children in self.closures.items():
             print(parent, '->', children)
 
+def unroll_function(prolog_json: dict) -> list[Any]:
+    match prolog_json:
+        case {'functor': 'pair', 'args': [{'functor': 'function', 'args': [a]}, b]}:
+            return [*unroll_function(a), b]
+        case _:
+            return [prolog_json]
+def is_function(prolog_json: dict) -> bool:
+    match prolog_json:
+        case {'functor': 'pair', 'args': [{'functor': 'function', 'args': [_]}, _]}:
+            return True
+        case _:
+            return False
+def unroll_tuple(prolog_json: dict) -> list[Any]:
+    match prolog_json:
+        case {'functor': 'pair', 'args': [{'functor': 'tuple', 'args': [a]}, b]}:
+            return [*unroll_tuple(a), b]
+        case _:
+            return [prolog_json]
+
+def is_adt(prolog_json: dict) -> bool:
+    match prolog_json:
+        case {'functor': 'pair', 'args': [{'functor': 'function', 'args': [_]}, _]}:
+            return False
+        case {'functor': 'pair', 'args': [{'functor': 'tuple', 'args': [_]}, _]}:
+            return False
+        case {'functor': 'pair', 'args': ['list', _]}:
+            return False
+        case {'functor': 'pair', 'args': _}:
+            return True
+        case _:
+            return False
+def unroll_adt(prolog_json:dict) -> list[Any]:
+    match prolog_json:
+        case {'functor': 'pair', 'args': [a, b]}:
+            return [*unroll_adt(a), b]
+        case _:
+            return [prolog_json]
 
 class Type:
     letters = ascii_lowercase
-
     def __init__(self, json: dict | str, name: str):
         self.index = 0
         self.degree = 0
@@ -183,44 +219,30 @@ class Type:
                 return 'Float'
             case 'unit':
                 return '()'
-            case {'functor': 'adt', 'args': [{'functor': '[|]', 'args': ['list', x]}]}:
-                x_type = self.from_json(x).strip()
-                return f'[{x_type}]'
-
-            case {'functor': 'adt', 'args': [{'functor': '[|]', 'args': ['tuple', x]}]}:
-                args = prolog_list_to_list(x)
-                return '(' + ', '.join([self.from_json(arg) for arg in args[:-1]]) + ')'
-
-            case {'functor': 'adt', 'args': [{'functor': '[|]', 'args': ['function', x]}]}:
-                args = prolog_list_to_list(x)
-
-                def is_function(prolog_json: dict | str):
-                    return (
-                            type(prolog_json) == dict and
-                            prolog_json.get('functor') == 'adt' and
-                            prolog_json.get('args', [{}])[0].get('args', [{}])[0] == 'function'
-                    )
-
-                arg_types = []
-                for i, arg in enumerate(args[:-1]):
-                    if is_function(arg) and i != len(args) - 2:
+            case {'functor': 'pair', 'args': [{'functor': 'function', 'args': [a]}, b]}:
+                args = unroll_function(value)
+                arg_types= []
+                for i, arg in enumerate(args):
+                    if is_function(arg) and i != len(args) - 1:
                         arg_types.append('(' + self.from_json(arg) + ')')
                     else:
                         arg_types.append(self.from_json(arg))
-
-                return ' -> '.join(arg_types)
-            case {'functor': 'adt', 'args': x}:
-                adt_list = prolog_list_to_list(x[0])
-                [functor, *args] = adt_list
-                arg_str = [self.from_json(functor)]
-                for arg in args:
-
-                    if isinstance(arg, dict) and arg.get('functor') == 'adt' and arg.get('args', [{}])[0].get(
-                            'functor') not in ['tuple', 'function', 'list']:
-                        arg_str.append(f'({self.from_json(arg)})')
+                return '->'.join(arg_types)
+            case {'functor': 'pair', 'args': ['list', x]}:
+                x_type = self.from_json(x).strip()
+                return f'[{x_type}]'
+            case {'functor': 'pair', 'args': [{'functor': 'tuple', 'args': [a]}, b]}:
+                args = unroll_tuple(value)
+                return '(' + ', '.join([self.from_json(arg) for arg in args]) + ')'
+            case {'functor': 'pair', 'args': [a, b]}:
+                adt_list = unroll_adt(value)
+                arg_types = []
+                for i, arg in enumerate(adt_list):
+                    if is_adt(arg) and i != len(adt_list) - 1:
+                        arg_types.append('(' + self.from_json(arg) + ')')
                     else:
-                        arg_str.append(self.from_json(arg))
-                return ' '.join(arg_str)
+                        arg_types.append(self.from_json(arg))
+                return ' '.join(arg_types)
 
             case {'functor': 'require', 'args': [class_pl_list]}:
                 class_list = prolog_list_to_list(class_pl_list)
@@ -229,8 +251,7 @@ class Type:
                 letter = self.from_json(class_list[-1])
                 self.type_classes[letter] = self.type_classes[letter].union(classes)
                 return letter
-            case {'functor': '[|]', 'args': args}:
-                return ' '.join([self.from_json(arg) for arg in args])
+
             case _:
                 if value[0].isupper():  # Prolog Variables
                     if self.mapping.get(value, False):
@@ -256,37 +277,6 @@ class Type:
 
     def __repr__(self):
         return self.__str__()
-
-# a -> b -> c
-#
-# int -> int  -> bool
-#
-# int -> a
-# (-> a b) c
-# maybe int
-# [int]
-# (a, b)
-# a b c
-#
-# [int] => f a
-# maybe int => f a
-# int -> bool => f a
-#
-# adt([tuple, a, b])
-# adt([maybe, int])
-# adt([list, int])
-# adt([a, b, c])
-# adt([function, int, int, bool])
-# adt(function(x))
-# adt(F, int) == function(int, int, int)
-#
-# adt(F, int) == adt(a b int)
-#
-# function(a, b, c) == function(a, X)
-# [function a, function b, c]
-# [function a, X]
-# [list, int]
-
 
 def pair(*terms: Term) -> Term:
     match len(terms):
@@ -382,7 +372,9 @@ class RuleMeta(BaseModel):
     type: RuleType
     loc: Loc
     src_text: Maybe[str]
+    free_var: str
     parent_rule: int | None
+    var_name: str | None
 
 
 class Rule(BaseModel):
@@ -397,10 +389,13 @@ class Rule(BaseModel):
 
 class Cause(BaseModel):
     rules: list[Rule]
+    explains: list[str]
+
 
 class Diagnosis(BaseModel):
     causes: list[Cause]
     locs: list[Loc]
+    names: list[str]
 
 
 def get_location(ann: dict[str, Any]) -> tuple[str, Span]:
@@ -426,6 +421,13 @@ class Env(BaseModel):
     head: Head
     toplevel: bool
     parent_rule: int | None
+    free_var: Term | None
+    var_name: str | None
+
+    def with_freevar(self, v: Term) -> 'Env':
+        attributes = self.dict()
+        attributes.pop('free_var')
+        return Env(**attributes, free_var=v)
 
     def with_head(self, head: Head) -> 'Env':
         attributes = self.dict()
@@ -440,9 +442,12 @@ class Env(BaseModel):
     def with_parent_rule(self, parent_rule: int) -> 'Env':
         attributes = self.dict()
         attributes.pop('parent_rule')
-
         return Env(**attributes, parent_rule=parent_rule)
 
+    def with_var_name(self, var_name: str) -> 'Env':
+        attributes = self.dict()
+        attributes.pop('var_name')
+        return Env(**attributes, var_name=var_name)
 
 class System:
     project_dir = Path(__file__).parent.parent
@@ -543,6 +548,8 @@ class System:
                     src_text=src_text,
                     type=rule_type,
                     parent_rule=env.parent_rule,
+                    free_var=env.free_var.value,
+                    var_name=env.var_name
                 )
             )
         )
@@ -586,18 +593,73 @@ class System:
         result = not any([contains( mcs, other) for other in all_mcs if other.setId != mcs.setId])
         return result
 
+
+    def diagnose_error(self, error: Error) -> list[tuple[str, str, Loc]]:
+        all_error_rule_ids : set[int] = set().union(*[mus.rules for mus in error.mus_list])
+        all_error_rules = [self.rules[rid] for rid in all_error_rule_ids]
+        all_heads = {
+            decode(de_module(h.head.name)) for h in all_error_rules}
+        all_variables = [
+            (decode(de_module(rule.meta.var_name)), rule.meta.free_var, rule.meta.loc) for rule in all_error_rules
+            if rule.meta.type == RuleType.Var]
+
+        error_relevant_vars = [
+            (v, fv, loc) for (v, fv, loc) in all_variables if v in all_heads
+        ]
+        return error_relevant_vars
+
+    def diagnose_mcs(self, mcs_rules: list[Rule], error_id: int, mcs_id: int, name_and_locs) -> list[str]:
+        names = { name for name, _,_ in name_and_locs}
+        types = self.infer_type(error_id, mcs_id)
+        explainers = []
+        for rule in mcs_rules:
+            head_name = decode(de_module(rule.head.name))
+            has_usage = head_name in names
+            human_name = de_location(head_name)
+            rule_text_human_name = b64_to_str(rule.meta.src_text.value)
+            if rule.meta.type == RuleType.TypeClass:
+                explainer = f"The required type class is not implemented."
+                explainers.append(explainer)
+                return  explainers
+            if has_usage:
+                useages = [(fv, loc) for name, fv, loc in name_and_locs if name == head_name]
+                usage_text = [f"{human_name} is used as {types[fv]} at L{loc[1][0][0]}C{loc[1][0][1]}" for fv, loc in useages]
+                if rule.meta.type == RuleType.Type:
+                    explainer =  ''.join([
+                        f"Change {rule_text_human_name} to a different type, because ",
+                        *usage_text
+                    ])
+                    explainers.append(explainer)
+                else:
+                    explainer =  ''.join([
+                        f"Change {rule_text_human_name} to a different expression, because ",
+                        *usage_text
+                        ])
+                    explainers.append(explainer)
+            else:
+                ideal_type = types[rule.meta.free_var]
+                if rule.meta.type == RuleType.Type:
+                    explainer = f"Change {rule_text_human_name} to {ideal_type}"
+                    explainers.append(explainer)
+                else:
+                    explainer = f"Change {rule_text_human_name} to a different expression of type {ideal_type}"
+                    explainers.append(explainer)
+        return explainers
+
     def diagnose(self) -> list[Diagnosis]:
         diagnoses = []
         print('begin diagnosis')
         for error in self.tc_errors:
+            name_and_locs = self.diagnose_error(error)
             causes = []
             for mcs in error.mcs_list:
                 if self.is_most_specific_fix(mcs, error.mcs_list):
                     mcs_rules = [self.rules[rid] for rid in mcs.rules]
-                    causes.append(Cause(rules=mcs_rules))
+                    explains = self.diagnose_mcs(mcs_rules, error.error_id, mcs.setId, name_and_locs)
+                    causes.append(Cause(rules=mcs_rules, explains=explains))
 
-            locs = list(chain(*[[r.meta.loc for r in cause.rules] for cause in causes]))
-            diagnoses.append(Diagnosis(causes=causes, locs=locs))
+            names = list(set(chain(*[[de_location(decode(de_module(r.head.name))) for r in cause.rules] for cause in causes])))
+            diagnoses.append(Diagnosis(causes=causes, locs=[], names=names))
         print('finsih diagnosis')
         return diagnoses
 
@@ -785,7 +847,8 @@ class System:
 
     def marshal(self):
         self.file_content = self.hs_file_path.read_text()
-        self.check_node(self.ast, atom('true'), Env(head=Head.type_of('module'), toplevel=True, parent_rule=None))
+        self.check_node(self.ast, atom('true'), Env(
+            head=Head.type_of('module'), toplevel=True, parent_rule=None, var_name=None))
 
     def type_check(self) -> list[Diagnosis]:
         self.tc_errors = []
@@ -817,7 +880,7 @@ class System:
         all_mcses = current_mcs.union(*other_mcses)
         result = self.solve({r.rid for r in self.rules if r.rid not in all_mcses})
         types = {decode(key[1:]) if key.startswith('_') else decode(key): Type(value, key) for key, value in
-                 result[0].items()}
+                 result[0].items() if key != '$residuals'}
         return types
 
     def get_module(self, node) -> str:
@@ -1085,9 +1148,9 @@ class System:
                         con_var = self.bind(con_name)
                         arg_vars = self.bind_n(len(types), con_name)
                         new_env = env.with_head(Head.type_of(con_name))
-                        rid = self.add_rule(T == con_var, ann, RuleType.Decl, new_env)
+                        self.add_ambient_rule(T == con_var, new_env)
                         for t_ast, t_var in zip(types, arg_vars):
-                            self.check_node(t_ast, t_var, new_env.with_parent_rule(rid))
+                            self.check_node(t_ast, t_var, new_env)
                         self.add_ambient_rule(con_var == fun_of(*arg_vars, adt_var), new_env)
                     else:
                         raise NotImplementedError()
@@ -1099,9 +1162,8 @@ class System:
                             self.current_module_name,
                             self.get_name(name, env.toplevel))
                         var_pat = self.bind(var_name)
-                        new_env = env.with_head(Head.type_of(var_name))
+                        new_env = env.with_head(Head.type_of(var_name)).with_toplevel(False)
                         self.call_graph.add_closure(env.head.name, var_name, CallGraph.FREE)
-                        # rid = self.add_rule(T == var_pat, ann, RuleType.Decl, new_env)
                         self.add_ambient_rule(T == var_pat, new_env)
                         self.check_node(rhs, var_pat, new_env)
 
@@ -1117,9 +1179,7 @@ class System:
                 var_rhs = self.bind(fun_name)
                 # var_fun = self.bind(fun_name)
                 self.call_graph.add_closure(env.head.name, fun_name, CallGraph.FREE)
-                new_env = env.with_head(Head.type_of(fun_name))
-                # rid = self.add_rule(T == var_fun, ann, RuleType.Decl, new_env)
-                # self.add_rule(T == var_fun, ann, RuleType.Decl, new_env)
+                new_env = env.with_head(Head.type_of(fun_name)).with_toplevel(False)
                 self.add_ambient_rule(T == fun_of(*var_args, var_rhs), new_env)
                 # new_env = new_env.with_parent_rule(rid)
                 for match in matches:
@@ -1137,7 +1197,7 @@ class System:
                     term_var = self.bind(fun_name)
                     new_env = env.with_head(Head.type_of(fun_name))
                     self.add_ambient_rule(term_var == T, new_env)
-                    rid = self.add_rule(fun_var == term_var, sig['contents'][0], RuleType.Type, new_env)
+                    rid = self.add_rule(fun_var == term_var, sig['contents'][0], RuleType.Type, new_env.with_freevar(term_var))
                     self.check_node(sig, fun_var, new_env.with_parent_rule(rid))
 
             case {'tag': 'BDecls', 'contents': [ann, decls]}:
@@ -1159,9 +1219,10 @@ class System:
                 for stmt in stmts:
                     match stmt:
                         case {'tag': 'Qualifier', 'contents': [ann, exp]}:
-
                             pattern_var = self.bind(env.head.name)
-                            rid = self.add_rule(pattern_var == t_bool, ann, RuleType.Pattern, env)
+                            v = self.bind(env.head.name)
+                            self.add_ambient_rule(v == t_bool, env)
+                            rid = self.add_rule(pattern_var == t_bool, ann, RuleType.Pattern, env.with_freevar(v))
                             self.check_node(exp, pattern_var, env.with_parent_rule(rid))
 
                         case {'tag': 'Generator', 'contents': [ann, pat, exp]}:
@@ -1178,11 +1239,11 @@ class System:
                 var_name = self.get_qname(qname, env.toplevel)
                 new_var = self.bind(env.head.name)
                 self.call_graph.add_call(env.head.name, var_name, new_var.value)
-                self.add_rule(new_var == term, ann, RuleType.Var, env)
+                self.add_rule(new_var == term, ann, RuleType.Var, env.with_freevar(term).with_var_name(var_name))
 
             case {'tag': 'Tuple', 'contents': [ann, _, exps]}:
                 node_vars = self.bind_n(len(exps), env.head.name)
-                rid = self.add_rule(term == tuple_of(*node_vars), ann, RuleType.Tuple, env)
+                rid = self.add_rule(term == tuple_of(*node_vars), ann, RuleType.Tuple, env.with_freevar(term))
                 for exp, node_var in zip(exps, node_vars):
                     self.check_node(exp, node_var, env.with_parent_rule(rid))
 
@@ -1206,7 +1267,6 @@ class System:
                 [var1, var2, var_result] = self.bind_n(3, env.head.name)
                 # self.add_ambient_rule(term == var_result, env)
                 self.add_ambient_rule(var1 == fun_of(var2, term), env)
-                # rid = self.add_rule(var1 == fun_of(var2, term), ann, RuleType.App, env)
                 self.check_node(exp1, var1, env)
                 self.check_node(exp2, var2, env)
 
@@ -1216,13 +1276,12 @@ class System:
                     v_op == fun_of(v_left, v_right, v_result),
                     env
                 )
-                rid = self.add_rule(
+                self.add_ambient_rule(
                     term == fun_of(v_left, v_result),
-                    ann, RuleType.App,
                     env
                 )
-                self.check_node(op, v_op, env.with_parent_rule(rid))
-                self.check_node(right, v_right, env.with_parent_rule(rid))
+                self.check_node(op, v_op, env)
+                self.check_node(right, v_right, env)
 
             case {'tag': 'LeftSection', 'contents': [ann, left, op]}:
                 [v_op, v_left, v_right, v_result] = self.bind_n(4, env.head.name)
@@ -1230,12 +1289,12 @@ class System:
                     v_op == fun_of(v_left, v_right, v_result),
                     env
                 )
-                rid = self.add_rule(
+                self.add_ambient_rule(
                     term == fun_of(v_right, v_result),
-                    ann, RuleType.App, env
+                    env
                 )
-                self.check_node(op, v_op, env.with_parent_rule(rid))
-                self.check_node(left, v_left, env.with_parent_rule(rid))
+                self.check_node(op, v_op, env)
+                self.check_node(left, v_left, env)
 
             case {'tag': 'Lambda', 'contents': [ann, pats, exp]}:
                 fun_name = self.lambda_name()
@@ -1243,7 +1302,7 @@ class System:
                 self.call_graph.add_closure(env.head.name, fun_name, CallGraph.FREE)
                 lambda_var = self.bind(env.head.name)
                 self.call_graph.add_call(env.head.name, fun_name, lambda_var.value)
-                rid = self.add_rule(lambda_var == term, ann, RuleType.App, env)
+                rid = self.add_rule(lambda_var == term, ann, RuleType.App, env.with_freevar(lambda_var))
 
                 var_args = self.bind_n(len(pats), fun_name)
                 var_rhs = self.bind(fun_name)
@@ -1266,9 +1325,10 @@ class System:
                 var_cond = self.bind(env.head.name)
                 var_proxy = self.bind(env.head.name)
                 self.add_ambient_rule(var_proxy == t_bool, env)
+
                 rid = self.add_rule(var_cond == t_bool,
                               cond['contents'][0],
-                              RuleType.Lit, env)
+                              RuleType.Lit, env.with_freevar(var_proxy))
                 self.check_node(cond, var_cond, env.with_parent_rule(rid))
                 self.check_node(left_branch, term, env)
                 self.check_node(right_branch, term, env)
@@ -1277,11 +1337,11 @@ class System:
                 matched_var = self.bind(env.head.name)
                 rhs_var: Term = self.bind(env.head.name)
                 self.check_node(exp, matched_var, env)
-                rid = self.add_rule(rhs_var == term, ann, RuleType.Lit, env)
+                self.add_ambient_rule(rhs_var == term, env)
                 for alt in alts:
                     [alt_ann, pat, rhs, binds] = alt
-                    self.check_node(pat, matched_var, env.with_parent_rule(rid))
-                    self.check_node(rhs, rhs_var, env.with_parent_rule(rid))
+                    self.check_node(pat, matched_var, env)
+                    self.check_node(rhs, rhs_var, env)
 
             case {'tag': 'Let', 'contents': [ann, binds, exp]}:
                 decls = binds['contents'][1]
@@ -1291,7 +1351,7 @@ class System:
 
             case {'tag': 'List', 'contents': [ann, exps]}:
                 elem_var = self.bind(env.head.name)
-                rid = self.add_rule(term == list_of(elem_var), ann, RuleType.Lit, env)
+                rid = self.add_rule(term == list_of(elem_var), ann, RuleType.Lit, env.with_freevar(term))
                 for exp in exps:
                     self.check_node(exp, elem_var, env.with_parent_rule(rid))
 
@@ -1302,7 +1362,7 @@ class System:
                         term == list_of(v),
                         require_class('Enum', v, wildcard)
 
-                    ), ann, RuleType.Lit, env)
+                    ), ann, RuleType.Lit, env.with_freevar(term))
                 self.check_node(exp, v, env.with_parent_rule(rid))
 
             case {'tag': 'EnumTo', 'contents': [ann, exp]}:
@@ -1311,14 +1371,14 @@ class System:
                     combined(
                         term == list_of(v),
                         require_class('Enum', v, wildcard)
-                    ), ann, RuleType.Lit, env)
+                    ), ann, RuleType.Lit, env.with_freevar(term))
                 self.check_node(exp, v, env.with_parent_rule(rid))
 
             case {'tag': 'EnumFromTo', 'contents': [ann, exp1, exp2]}:
                 v1, v2 = self.bind_n(2, env.head.name)
                 rid = self.add_rule(
                     combined(term == list_of(v1), require_class('Enum', v1, wildcard))
-                    , ann, RuleType.Lit, env)
+                    , ann, RuleType.Lit, env.with_freevar(term))
                 self.add_ambient_rule(unify(v1, v2), env)
                 self.check_node(exp1, v1, env.with_parent_rule(rid))
                 self.check_node(exp2, v2, env.with_parent_rule(rid))
@@ -1346,17 +1406,17 @@ class System:
 
             # Lit nodes:
             case {'tag': 'Char', 'contents': [ann, _, _]}:
-                self.add_rule(term == t_char, ann, RuleType.Lit, env)
+                self.add_rule(term == t_char, ann, RuleType.Lit, env.with_freevar(term))
 
             case {'tag': 'String', 'contents': [ann, _, _]}:
-                self.add_rule(term == list_of(t_char), ann, RuleType.Lit, env)
+                self.add_rule(term == list_of(t_char), ann, RuleType.Lit, env.with_freevar(term))
 
             case {'tag': 'Int', 'contents': [ann, _, _]}:
                 v = self.bind(env.head.name)
-                self.add_rule(term == t_int, ann, RuleType.Lit, env)
+                self.add_rule(term == t_int, ann, RuleType.Lit, env.with_freevar(term))
 
             case {'tag': 'Frac', 'contents': [ann, _, _]}:
-                self.add_rule(term == t_float, ann, RuleType.Lit, env)
+                self.add_rule(term == t_float, ann, RuleType.Lit, env.with_freevar(term))
 
             # Types
             case {'tag': 'TyCon', 'contents': [ann, qname]}:
@@ -1432,9 +1492,11 @@ class System:
                 self.check_node(t, term, env)
                 for [class_name, type_var_name, ann] in qualifications:
                     class_name = class_name.split('_')[-1]
-                    self.add_ambient_rule(
+                    self.add_rule(
                         require_class(class_name, var('TypeVar_' + type_var_name), wildcard),
-                        env,
+                        ann,
+                        RuleType.TypeClass,
+                        env.with_freevar(term),
                     )
 
             # Patterns
@@ -1447,13 +1509,13 @@ class System:
 
             case {'tag': 'PTuple', 'contents': [ann, _, pats]}:
                 elems = self.bind_n(len(pats), env.head.name)
-                rid = self.add_rule(term == tuple_of(*elems), ann, RuleType.Lit, env)
+                rid = self.add_rule(term == tuple_of(*elems), ann, RuleType.Lit, env.with_freevar(term))
                 for pat, elem in zip(pats, elems):
                     self.check_node(pat, elem, env.with_parent_rule(rid))
 
             case {'tag': 'PList', 'contents': [ann, pats]}:
                 elem = self.bind(env.head.name)
-                rid = self.add_rule(term == list_of(elem), ann, RuleType.Lit, env)
+                rid = self.add_rule(term == list_of(elem), ann, RuleType.Lit, env.with_freevar(term))
                 for pat in pats:
                     self.check_node(pat, elem, env.with_parent_rule(rid))
 
@@ -1467,7 +1529,7 @@ class System:
                 fun_name = self.get_qname(qname, env.toplevel)
                 fun_var = self.bind(env.head.name)
                 arg_vars = self.bind_n(len(p_args), env.head.name)
-                rid = self.add_rule(fun_var == fun_of(*arg_vars, term), ann, RuleType.App, env)
+                rid = self.add_rule(fun_var == fun_of(*arg_vars, term), ann, RuleType.App, env.with_freevar(term))
                 self.call_graph.add_call(env.head.name, fun_name, fun_var.value)
                 for arg_ast, arg_var in zip(p_args, arg_vars):
                     self.check_node(arg_ast, arg_var, env.with_parent_rule(rid))
@@ -1482,12 +1544,12 @@ class System:
             case {'tag': 'QVarOp', 'contents': [ann, qname]}:
                 v = self.bind(env.head.name)
                 self.call_graph.add_call(env.head.name, self.get_qname(qname, env.toplevel), v.value)
-                self.add_rule(v == term, ann, RuleType.Var, env)
+                self.add_rule(v == term, ann, RuleType.Var, env.with_freevar(term))
 
             case {'tag': 'Special', 'contents': [ann, special_con]}:
                 match special_con['tag']:
                     case "UnitCon":
-                        self.add_rule(term == t_unit, ann, RuleType.Lit, env)
+                        self.add_rule(term == t_unit, ann, RuleType.Lit, env.with_freevar(term))
                     case "ListCon":
                         raise NotImplementedError("ListCon")
                     case "FunCon":

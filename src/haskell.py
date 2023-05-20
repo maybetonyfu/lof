@@ -2,6 +2,7 @@ import string
 from collections import defaultdict
 from enum import Enum
 from itertools import chain
+from operator import attrgetter
 from subprocess import run
 import ujson
 from typing import Any, TypeAlias
@@ -326,6 +327,15 @@ class RuleType(str, Enum):
     Pattern = "Pattern"
     TypeClass = "TypeClass"
 
+    def score(self):
+        match self.value:
+            case RuleType.Lit:
+                return 4
+            case RuleType.Type:
+                return 2
+            case _:
+                return 0
+
 
 class HeadType(str, Enum):
     TypeOf = "TypeOf"
@@ -390,6 +400,7 @@ class Rule(BaseModel):
 class Cause(BaseModel):
     rules: list[Rule]
     explains: list[str]
+    score: int
 
 
 class Diagnosis(BaseModel):
@@ -646,6 +657,18 @@ class System:
                     explainers.append(explainer)
         return explainers
 
+    def rank_causes(self, causes: list[Cause]) -> list[Cause]:
+        def rank_function(cause: Cause):
+            number_of_rules = len(cause.rules)
+            change_complexity = sum([len(r.meta.src_text.value) for r in cause.rules])
+            rule_type_score = sum([r.meta.type.score() for r in cause.rules])
+            score = change_complexity + number_of_rules - rule_type_score
+            attributes = cause.dict()
+            attributes.pop('score')
+            return Cause(**attributes, score=score)
+
+        return sorted([rank_function(c) for c in causes], key=attrgetter('score'))
+
     def diagnose(self) -> list[Diagnosis]:
         diagnoses = []
         print('begin diagnosis')
@@ -656,10 +679,10 @@ class System:
                 if self.is_most_specific_fix(mcs, error.mcs_list):
                     mcs_rules = [self.rules[rid] for rid in mcs.rules]
                     explains = self.diagnose_mcs(mcs_rules, error.error_id, mcs.setId, name_and_locs)
-                    causes.append(Cause(rules=mcs_rules, explains=explains))
+                    causes.append(Cause(rules=mcs_rules, explains=explains, score=0))
 
             names = list(set(chain(*[[de_location(decode(de_module(r.head.name))) for r in cause.rules] for cause in causes])))
-            diagnoses.append(Diagnosis(causes=causes, locs=[], names=names))
+            diagnoses.append(Diagnosis(causes=self.rank_causes(causes), locs=[], names=names))
         print('finsih diagnosis')
         return diagnoses
 

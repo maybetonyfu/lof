@@ -1,7 +1,13 @@
 import base64
-from fastapi import FastAPI, Body
+from html import unescape
+from typing import Annotated
+from urllib.parse import unquote, unquote_plus
+
+from fastapi import FastAPI, Body, Form
 from fastapi.responses import HTMLResponse
 from pathlib import Path
+
+from starlette.responses import PlainTextResponse
 
 from src.encoder import str_to_b64
 from src.haskell import Diagnosis, check_haskell_project
@@ -61,7 +67,9 @@ async def list_file(user_id: str):
 
 
 @app.post("/editor/{user_id}/{file_path:path}", response_class=HTMLResponse)
-async def save_file(user_id: str, file_path: str, text: str = Body()):
+async def save_file(user_id: str, file_path: str, body: str = Body()):
+    text = unquote_plus(body[5:])
+
     destination_dir = project_dir / "tmp" / user_id
     (destination_dir / file_path).write_text(text)
     file_list = list_files(destination_dir)

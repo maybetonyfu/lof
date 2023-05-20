@@ -31,6 +31,9 @@
                 if (this.diagnoses.length === 0) return false
                 return this.diagnoses[this.error_id].causes[this.cause_id].rules.map(r => r.meta.loc[1]).some(loc => pointInRange([x, y], loc))
 
+            },
+            save_file() {
+
             }
         }
 
@@ -40,20 +43,22 @@
 
 <body class="flex flex-col h-screen" x-data="data">
 <div class="menu-bar h-10 bg-gray-100">
-    <a >Save</a>
+    <button type="submit" form="editor" class="bg-green-400 p-2">Save</button>
 </div>
 
 <div class="main-interface flex" style="height: calc(100vh - 2.5rem)">
     <div class="p-1">
         <template x-for="f in file_list">
+            <template x-if="!built_in_files.includes(f)">
             <a :href="`/editor/${user_id}/${f}`"
                :class="f === file && 'bg-gray-400'"
                class="h-8 block leading-8 bg-gray-200 my-0.5 px-2" x-text="f"></a>
+            </template>
         </template>
 
     </div>
 
-    <div class="h-full overflow-y-auto relative flex-grow">
+    <form class="h-full overflow-y-auto relative flex-grow" :action="`/editor/${user_id}/${file}`" method="POST" id="editor">
         <div class="highlight absolute">
             <template x-for="l in max_line_number">
                 <div class="line h-8 flex">
@@ -64,14 +69,13 @@
                     </template>
                 </div>
             </template>
-
         </div>
-        <pre class="code absolute leading-8 outline-none w-full"
-             spellcheck="false"
-             contenteditable="true"
-             x-text="atob(text)"></pre>
-
-    </div>
+        <textarea
+                name="text"
+                class="code absolute leading-8 outline-none h-full w-full bg-transparent"
+                spellcheck="false"
+                x-model="atob(text)"></textarea>
+    </form>
 
     <div class="w-96 p-1 bg-gray-100 h-full overflow-y-auto">
         <div class="error-selector flex p-2">
@@ -82,14 +86,26 @@
                 ></div>
             </template>
         </div>
-        <div class="error-description p-2">
-            Goanna cannot assign type for the following expressions:
-            <template x-for="name in diagnoses[error_id].names">
-                <span x-text="name" class="mx-1"></span>
-            </template>
-        </div>
+        <template x-if="diagnoses.length !== 0">
+            <div class="error-description p-2">
+                Goanna cannot assign type for the following expressions:
+                <template x-for="name in diagnoses[error_id].names">
+                    <span x-text="name" class="mx-1 bg-gray-300"></span>
+                </template>
+            </div>
+        </template>
+        <template x-if="diagnoses.length === 0">
+            <div class="error-description p-2 flex flex-col items-center">
+                <svg viewBox="0 0 24 24" fill="currentColor" class="w-10 h-10 text-green-500 mb-4">
+                  <path fill-rule="evenodd" d="M2.25 12c0-5.385 4.365-9.75 9.75-9.75s9.75 4.365 9.75 9.75-4.365 9.75-9.75 9.75S2.25 17.385 2.25 12zm13.36-1.814a.75.75 0 10-1.22-.872l-3.236 4.53L9.53 12.22a.75.75 0 00-1.06 1.06l2.25 2.25a.75.75 0 001.14-.094l3.75-5.25z" clip-rule="evenodd" />
+                </svg>
+                <div>Your code is well-typed.</div>
+            </div>
+        </template>
+
+
         <div class="flex flex-col p-2">
-            <template x-if="error_id != null && diagnoses.length != 0">
+            <template x-if="error_id != null && diagnoses.length !== 0">
                 <template x-for="(cause, c_id) in diagnoses[error_id].causes">
                     <div class="my-1">
                         <div @click="cause_id == c_id ? cause_id = null : cause_id = c_id"
@@ -115,12 +131,10 @@
                                 </svg>
                             </span>
                         </div>
-                        <div class="bg-white">
-                            <template x-if="cause_id == c_id">
-                                <template x-for="explain in cause.explains">
-                                    <div x-text="explain">
-                                    </div>
-                                </template>
+                        <div class="bg-white" x-show="cause_id == c_id">
+                            <template x-for="explain in cause.explains">
+                                <div x-text="explain">
+                                </div>
                             </template>
                         </div>
                     </div>

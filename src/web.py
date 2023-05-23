@@ -32,7 +32,7 @@ built_in_files = [
 def list_files(destination_dir: Path) -> list[str]:
     if not destination_dir.exists():
         destination_dir.mkdir(exist_ok=True, parents=True)
-        shutil.copytree(source_dir, destination_dir)
+        shutil.copytree(source_dir, destination_dir, dirs_exist_ok=True)
 
     files = destination_dir.rglob("*.hs")
     return sorted([str(f.relative_to(destination_dir).as_posix()) for f in files])
@@ -75,7 +75,7 @@ async def save_file(user_id: str, file_path: str, body: str = Body()):
     file_list = list_files(destination_dir)
     lines = text.splitlines()
     number_of_lines = len(lines)
-    number_of_cols = max(*[len(line) for line in lines])
+    number_of_cols =  max([len(line) for line in lines]) if number_of_lines else 0
     diagnoses = check_haskell_project(file_path, destination_dir)
     response = Response(
         text=base64.b64encode(text.encode()).decode('utf-8'),
@@ -98,7 +98,7 @@ async def editor(user_id: str, file_path: str):
     text = (destination_dir / file_path).read_text()
     lines = text.splitlines()
     number_of_lines = len(lines)
-    number_of_cols = max([len(ln) for ln in lines])
+    number_of_cols =  max([len(line) for line in lines]) if number_of_lines else 0
 
     diagnoses = check_haskell_project(file_path, destination_dir)
     response = Response(

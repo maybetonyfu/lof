@@ -126,8 +126,9 @@ class PlInterface(Enum):
 
 
 class Prolog(ContextDecorator):
-    def __init__(self, interface: PlInterface, file: Path):
+    def __init__(self, interface: PlInterface, file: Path, module_name: str):
         self.file: Path = file
+        self.module_name : str = module_name
         self.builtin: Path = Path(__file__).parent.parent / 'prolog' / 'builtin.pl'
         self.clauses: list[Clause] = []
         self.queries: list[Term] = []
@@ -155,7 +156,7 @@ class Prolog(ContextDecorator):
         self.mqi.stop()
 
     def generate_script(self) -> str:
-        module_name = "user_" + self.file.stem
+        module_name = "user_" + self.module_name.replace('.', '_')
         pubs = []
         for c in self.clauses:
             value: dict = c.head.value
@@ -194,11 +195,13 @@ class Prolog(ContextDecorator):
     def run_file(self) -> bool | list[bool | dict]:
         consult_query = ','.join(['set_prolog_flag(occurs_check, error)', 'style_check(-singleton)'] +
                                  [f"consult('{self.file.as_posix()}')"] +
-                                 ['once((' + ','.join([q.__str__() for q in self.queries]) + '))']
+                                 ['once((' + ','.join([q.__str__() for q in (self.queries + [atom('true')])  ]) + '))']
                                  )
         try:
+
             result = self.prolog_thread.query(consult_query)
             return result
+
         except Exception as e:
             if isinstance(e, PrologError) and e.args[0].startswith('occurs_check'):
                 return False

@@ -55,7 +55,6 @@
                class="h-8 block leading-8 bg-gray-200 my-0.5 px-2" x-text="f"></a>
             </template>
         </template>
-
     </div>
 
     <form class="h-full overflow-y-auto relative flex-grow" :action="`/editor/${user_id}/${file}`" method="POST" id="editor">
@@ -72,7 +71,8 @@
         </div>
         <textarea
                 name="text"
-                class="code absolute leading-8 outline-none h-full w-full bg-transparent"
+                class="code absolute leading-8 outline-none w-full bg-transparent overflow-hidden"
+                :style="{height: (2.5 * max_line_number) + 'rem'}"
                 spellcheck="false"
                 x-model="atob(text)"></textarea>
     </form>
@@ -133,7 +133,7 @@
                         </div>
                         <div class="bg-white" x-show="cause_id == c_id">
                             <template x-for="explain in cause.explains">
-                                <div x-text="explain">
+                                <div x-text="atob(explain)">
                                 </div>
                             </template>
                         </div>

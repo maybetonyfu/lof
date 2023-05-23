@@ -169,3 +169,34 @@ any = undefined
 
 and :: [Bool] -> Bool
 and = undefined
+
+zip :: [a] -> [b] -> [(a, b)]
+zip = undefined
+
+
+fromIntegral :: Num a => Int -> a
+fromIntegral = undefined
+
+(/) :: Float -> Float -> Float
+(/) = undefined
+
+dropWhile :: (a -> Bool) -> [a] -> [a]
+dropWhile = undefined
+
+toUpper :: Char -> Char
+toUpper = undefined
+
+toLower :: Char -> Char
+toLower = undefined
+
+sqrt :: Float -> Float
+sqrt = undefined
+
+(^) :: Num a => a -> Int -> a
+(^) = undefined
+
+floor :: Num a => a -> Int
+floor = undefined
+
+ceiling :: Num a => a -> Int
+ceiling = undefined

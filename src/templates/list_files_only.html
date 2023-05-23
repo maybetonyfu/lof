@@ -33,10 +33,11 @@
 <div class="main-interface flex" style="height: calc(100vh - 2.5rem)">
     <div class="p-1">
         <template x-for="f in file_list">
+            <template x-if="!built_in_files.includes(f)">
             <a :href="`/editor/${user_id}/${f}`"
                class="h-8 block leading-8 bg-gray-200 my-0.5 px-2" x-text="f"></a>
+            </template>
         </template>
-
     </div>
 
     <div class="h-full overflow-y-auto relative flex-grow">

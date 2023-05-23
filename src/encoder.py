@@ -20,7 +20,8 @@ symbol_to_name = {
     "<": 'SYMlt',
     ">": 'SYMgt',
     "@": 'SYMat',
-    "?": 'SYMqm'
+    "?": 'SYMqm',
+    '^': 'SYMht'
 }
 
 name_to_symbol = {
@@ -43,7 +44,8 @@ name_to_symbol = {
     "SYMlt": "<",
     "SYMgt": ">",
     "SYMat": "@",
-    'SYMqm': '?'
+    'SYMqm': '?',
+    'SYMht': '^'
 
 }
 
@@ -53,7 +55,7 @@ def encode_char(char: str) -> str:
         return char
     elif char.isalnum():
         return char
-    elif char in "+-*!#$.='%|~:&/\<>@?":
+    elif char in "+-*!#$.='%|~:&/\<>@?^":
         return symbol_to_name[char]
     else:
         raise ValueError(f"Symbol {char} is not allowed")

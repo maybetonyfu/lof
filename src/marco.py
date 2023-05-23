@@ -119,6 +119,9 @@ class Marco:
             if self.loop_counter >= self.max_loops:
                 raise Exception("Too many loops")
             self.loop_counter += 1
+            if len(self.mss_list) > 1 and len(self.mss_list) > 16:
+                print('finished prematurely after ', self.sat_counter, ' runs', time.time())
+                return
 
             seed = self.get_unexplored(model)
             if self.sat(seed):

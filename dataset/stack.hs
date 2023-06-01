@@ -22,3 +22,13 @@ push x = do
 -- goanna results: 12
 -- oracle: true
 -- intended fix: 1
+-- response time: 0.9095690250396729
+-- mus size: 11
+-- ghc loc: 1
+-- ghc diagnosis: 1
+-- ghc fix: 0
+-- goanna1: 1
+-- goanna2: 2
+-- goanna3: 3
+-- goanna4: 5
+-- goanna5: 6

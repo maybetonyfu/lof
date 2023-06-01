@@ -4,3 +4,6 @@ venv
 __pycache__
 tmp/*
 !tmp/.gitkeep
+.Rproj.user
+.Rhistory
+.DS_Store

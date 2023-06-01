@@ -1,46 +1,31 @@
 # flyctl launch added from .gitignore
-**\node_modules
-**\.idea
-**\venv
-**\__pycache__
+**/node_modules
+**/.idea
+**/venv
+**/__pycache__
 
 # flyctl launch added from .idea\.gitignore
 # Default ignored files
-.idea\shelf
-.idea\workspace.xml
+.idea/shelf
+.idea/workspace.xml
 # Editor-based HTTP Client requests
-.idea\httpRequests
+.idea/httpRequests
 
-# flyctl launch added from client\.gitignore
-client\**\node_modules
-#client\**\output\js\main.js
-#client\**\output\js\main.js.map
 
-# flyctl launch added from client\.idea\.gitignore
-# Default ignored files
-client\.idea\shelf
-client\.idea\workspace.xml
-# Editor-based HTTP Client requests
-client\.idea\httpRequests
 
 # flyctl launch added from parser\haskell\.gitignore
-parser\haskell\**\*~
-parser\haskell\**\*.swp
-parser\haskell\**\tarballs
-parser\haskell\**\.stack-work
-parser\haskell\**\out
+parser/haskell/**/*~
+parser/haskell/**/*.swp
+parser/haskell/**/tarballs
+parser/haskell/**/.stack-work
+parser/haskell/**/out
 
 # flyctl launch added from parser\haskell\.idea\.gitignore
 # Default ignored files
-parser\haskell\.idea\shelf
-parser\haskell\.idea\workspace.xml
-# Editor-based HTTP Client requests
-parser\haskell\.idea\httpRequests
-# Datasource local storage ignored files
-parser\haskell\.idea\dataSources
-parser\haskell\.idea\dataSources.local.xml
+parser/haskell/.idea/*
 
 # flyctl launch added from venv\.gitignore
 # created by virtualenv automatically
-venv\**\*
+venv/**/*
 fly.toml
+.DS_Store/**/*

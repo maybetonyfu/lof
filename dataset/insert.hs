@@ -10,3 +10,13 @@ insertAt el list n =
 -- goanna results: 12
 -- oracle: true
 -- intended fix: 3
+-- response time: 4.876026153564453
+-- mus size: 16
+-- ghc loc: 0
+-- ghc diagnosis: 0
+-- ghc fix: 0
+-- goanna1: 1
+-- goanna2: 2
+-- goanna3: 4
+-- goanna4: 6
+-- goanna5: 7

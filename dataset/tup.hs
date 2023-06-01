@@ -17,3 +17,13 @@ registered = map hasUserRegistered users
 -- goanna results: 6
 -- oracle: true
 -- intended fix: 5
+-- response time: 0.5362210273742676
+-- mus size: 10
+-- ghc loc: 0
+-- ghc diagnosis: 0
+-- ghc fix: 0
+-- goanna1: 1
+-- goanna2: 2
+-- goanna3: 3
+-- goanna4: 4
+-- goanna5: 5

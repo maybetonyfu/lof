@@ -29,7 +29,17 @@ extend v e env  = (v,e):env
 answer :: Expr -> ([(String, Int)], Int)
 answer e = eval e []
 
--- theme: function
+-- theme: function, builtin
 -- goanna results: 4
 -- oracle: true
 -- intended fix: 3
+-- response time: 1.3374247550964355
+-- mus size: 4
+-- ghc loc: 1
+-- ghc diagnosis: 1
+-- ghc fix: 0
+-- goanna1: 1
+-- goanna2: 2
+-- goanna3: 3
+-- goanna4: 4
+-- goanna5: 4

@@ -53,3 +53,13 @@ periodAsDateSpan (MonthPeriod y m) =
 -- goanna results: 12
 -- oracle: true
 -- intended fix: 1
+-- response time: 86.9143180847168
+-- mus size: 30
+-- ghc loc: 0
+-- ghc diagnosis: 0
+-- ghc fix: 0
+-- goanna1: 4
+-- goanna2: 5
+-- goanna3: 8
+-- goanna4: 10
+-- goanna5: 11

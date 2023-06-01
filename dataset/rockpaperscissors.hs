@@ -26,3 +26,13 @@ score h1 h2 =
 -- goanna results: 7
 -- oracle: true
 -- intended fix: 1
+-- response time: 5.58024001121521
+-- mus size: 8
+-- ghc loc: 1
+-- ghc diagnosis: 1
+-- ghc fix: 0
+-- goanna1: 1
+-- goanna2: 3
+-- goanna3: 4
+-- goanna4: 5
+-- goanna5: 5

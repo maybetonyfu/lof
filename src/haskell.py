@@ -3,6 +3,7 @@ from collections import defaultdict
 from enum import Enum
 from itertools import chain
 from operator import attrgetter
+from time import time
 from subprocess import run
 import ujson
 from typing import Any, TypeAlias
@@ -410,7 +411,7 @@ class Cause(BaseModel):
 
 class Diagnosis(BaseModel):
     causes: list[Cause]
-    locs: list[Loc]
+    locs: list[int]
     names: list[str]
 
 class Context(BaseModel):
@@ -697,7 +698,8 @@ class System:
                     causes.append(Cause(rules=mcs_rules, explains=explains, score=0))
 
             names = list(set(chain(*[[de_location(decode(de_module(r.head.name))) for r in cause.rules] for cause in causes])))
-            diagnoses.append(Diagnosis(causes=self.rank_causes(causes), locs=[], names=names))
+            all_loc: list[int] = list(set().union(*[r.rules for r in error.mus_list]))
+            diagnoses.append(Diagnosis(causes=self.rank_causes(causes), locs=all_loc, names=names))
         print('finsih diagnosis')
         return diagnoses
 
@@ -1701,7 +1703,11 @@ def check_haskell_project(to_check_file: str, base_dir: Path):
                 system.call_graph.graph.update(call_graphs)
                 system.free_vars.update(free_vars)
                 system.generate_only()
-                return system.type_check()
+                start = time()
+                result =  system.type_check()
+                end = time()
+                print(end - start)
+                return result, end - start
 
 if __name__ == "__main__":
     to_check_file = "Test.hs"

@@ -1,0 +1,17 @@
+[Unit]
+Description=Gunicorn Daemon for FastAPI Demo Application
+After=network.target
+
+
+
+[Service]
+User=root
+Group=root
+WorkingDirectory=/root/lof/
+ExecStart=gunicorn -c gunicorn_conf.py app:app
+
+
+
+[Install]
+
+WantedBy=multi-user.target

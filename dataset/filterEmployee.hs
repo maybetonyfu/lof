@@ -15,3 +15,14 @@ employees = filter filterEmployees people
 -- goanna results: 3
 -- oracle: true
 -- intended fix: 2
+-- response time: 0.3042910099029541
+-- mus size: 6
+-- ghc loc: 0
+-- ghc diagnosis: 0
+-- ghc fix: 0
+
+-- goanna1: 1
+-- goanna2: 2
+-- goanna3: 3
+-- goanna4: 3
+-- goanna5: 3

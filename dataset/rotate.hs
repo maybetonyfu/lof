@@ -19,3 +19,13 @@ rotate x y
 -- goanna results: 1
 -- oracle: true
 -- intended fix: 1
+-- response time: 0.4114820957183838
+-- mus size: 6
+-- ghc loc: 1
+-- ghc diagnosis: 1
+-- ghc fix: 0
+-- goanna1: 1
+-- goanna2: 1
+-- goanna3: 1
+-- goanna4: 1
+-- goanna5: 1

@@ -1,13 +1,10 @@
 import base64
-from html import unescape
-from typing import Annotated
-from urllib.parse import unquote, unquote_plus
+from urllib.parse import unquote_plus
 
 from fastapi import FastAPI, Body, Form
 from fastapi.responses import HTMLResponse
 from pathlib import Path
 
-from starlette.responses import PlainTextResponse
 
 from src.encoder import str_to_b64
 from src.haskell import Diagnosis, check_haskell_project
@@ -50,6 +47,11 @@ class Response(ResponseBase):
     max_col_number: int
     file: str
     text: str
+    goanna1: int
+    goanna2: int
+    goanna3: int
+    goanna4: int
+    goanna5: int
 
 
 @app.get("/editor/{user_id}", response_class=HTMLResponse)
@@ -76,7 +78,12 @@ async def save_file(user_id: str, file_path: str, body: str = Body()):
     lines = text.splitlines()
     number_of_lines = len(lines)
     number_of_cols =  max([len(line) for line in lines]) if number_of_lines else 0
-    diagnoses = check_haskell_project(file_path, destination_dir)
+    diagnoses, response_time = check_haskell_project(file_path, destination_dir)
+    goanna1 = set().union(*[{r.rid for r in c.rules} for i, c in enumerate(diagnoses[0].causes) if i < 1])
+    goanna2 = set().union(*[{r.rid for r in c.rules} for i, c in enumerate(diagnoses[0].causes) if i < 2])
+    goanna3 = set().union(*[{r.rid for r in c.rules} for i, c in enumerate(diagnoses[0].causes) if i < 3])
+    goanna4 = set().union(*[{r.rid for r in c.rules} for i, c in enumerate(diagnoses[0].causes) if i < 4])
+    goanna5 = set().union(*[{r.rid for r in c.rules} for i, c in enumerate(diagnoses[0].causes) if i < 5])
     response = Response(
         text=base64.b64encode(text.encode()).decode('utf-8'),
         user_id=user_id,
@@ -85,7 +92,12 @@ async def save_file(user_id: str, file_path: str, body: str = Body()):
         max_col_number=number_of_cols,
         file=file_path,
         file_list=file_list,
-        built_in_files=built_in_files
+        built_in_files=built_in_files,
+        goanna1=len(goanna1),
+        goanna2=len(goanna2),
+        goanna3=len(goanna3),
+        goanna4=len(goanna4),
+        goanna5=len(goanna5)
     )
     return env.get_template('start.html').render(
         data=response.json())
@@ -99,8 +111,12 @@ async def editor(user_id: str, file_path: str):
     lines = text.splitlines()
     number_of_lines = len(lines)
     number_of_cols =  max([len(line) for line in lines]) if number_of_lines else 0
-
-    diagnoses = check_haskell_project(file_path, destination_dir)
+    diagnoses, response_time = check_haskell_project(file_path, destination_dir)
+    goanna1 = set().union(*[{r.rid for r in c.rules} for i, c in enumerate(diagnoses[0].causes) if i < 1])
+    goanna2 = set().union(*[{r.rid for r in c.rules} for i, c in enumerate(diagnoses[0].causes) if i < 2])
+    goanna3 = set().union(*[{r.rid for r in c.rules} for i, c in enumerate(diagnoses[0].causes) if i < 3])
+    goanna4 = set().union(*[{r.rid for r in c.rules} for i, c in enumerate(diagnoses[0].causes) if i < 4])
+    goanna5 = set().union(*[{r.rid for r in c.rules} for i, c in enumerate(diagnoses[0].causes) if i < 5])
     response = Response(
         text=str_to_b64(text),
         user_id=user_id,
@@ -109,6 +125,11 @@ async def editor(user_id: str, file_path: str):
         max_col_number=number_of_cols,
         file=file_path,
         file_list=file_list,
-        built_in_files=built_in_files
+        built_in_files=built_in_files,
+        goanna1=len(goanna1),
+        goanna2=len(goanna2),
+        goanna3=len(goanna3),
+        goanna4=len(goanna4),
+        goanna5=len(goanna5)
     )
     return env.get_template('start.html').render(data=response.json())

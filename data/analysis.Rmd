@@ -1,0 +1,85 @@
+---
+title: "analysis"
+output: html_document
+date: "2023-06-01"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+```
+
+```{r}
+library(tidyverse)
+data <- read_csv('data.csv')
+```
+
+## Performance
+
+```{r}
+ggplot(data) +
+  geom_point(aes(x=filename, y=response_time))
+```
+
+## Accuracy
+
+```{r}
+total_role <- nrow(data)
+goanna1_accuracy <- (data %>% filter(goanna_acc_1 == TRUE) %>% nrow) / total_role
+goanna2_accuracy <- (data %>% filter(goanna_acc_2 == TRUE)  %>% nrow) / total_role
+goanna3_accuracy <- (data %>% filter(goanna_acc_3 == TRUE)  %>% nrow) / total_role
+goanna4_accuracy <- (data %>% filter(goanna_acc_4 == TRUE)  %>% nrow) / total_role
+goanna5_accuracy <- (data %>% filter(goanna_acc_4 == TRUE) %>% nrow) / total_role
+ghc_accuracy <- (data %>% filter(ghc_loc == TRUE) %>% nrow)/ total_role
+
+accuracies <- tibble(
+  x = c('ghc', 'helium', 'goanna1', 'goanna2',  'goanna3', 'goanna4', 'goanna5'), 
+  y = c(ghc_accuracy, 0.66, goanna1_accuracy, goanna2_accuracy, goanna3_accuracy, goanna4_accuracy, goanna5_accuracy)
+)
+
+ggplot(accuracies) + geom_col(aes(x, y))
+
+```
+
+## Conciseness 1
+
+```{r}
+ggplot(data) +
+  geom_col(aes(x=filename, y=goanna_result)) +
+  geom_point(aes(x=filename, y =intended_fix), shape=22, fill="green")
+
+```
+
+## Conciseness 2
+
+```{r}
+tribble(
+  ~x, ~y, ~z,
+  #--|--|----
+  "a", 2, 3.6,
+  "b", 1, 8.5
+)
+# conciseness <- tibble(
+#   ~x, ~y,
+# c("chameleon", "goanna1", 'goanna2', 'goanna3', 'goanna4', 'goanna5', 'goanna-all'),
+# 
+#   data[['chameleon']],
+#   data[['goanna_locs_1']],
+#   data[['goanna_locs_2']],
+#   data[['goanna_locs_3']],
+#   data[['goanna_locs_4']],
+#   data[['goanna_locs_5']],
+#   data[['goanna_result']]
+#   
+#   
+# )
+
+ggplot(data) + geom_boxplot(aes(x=1,y=chameleon)) +
+   geom_boxplot(aes(x=2,y=goanna_locs_1)) +
+  geom_boxplot(aes(x=3,y=goanna_locs_2)) +
+  geom_boxplot(aes(x=4,y=goanna_locs_3)) +
+  geom_boxplot(aes(x=5,y=goanna_locs_4)) +
+  geom_boxplot(aes(x=6,y=goanna_locs_5))
+  
+
+```

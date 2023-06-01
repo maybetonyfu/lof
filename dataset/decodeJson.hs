@@ -61,3 +61,13 @@ renderArrayValues (v:vs) = renderJValue v ++ "," ++ renderArrayValues vs
 -- goanna results: 15
 -- oracle: true
 -- intended fix: 1
+-- response time: 47.54701495170593
+-- mus size: 18
+-- ghc loc: 1
+-- ghc diagnosis: 1
+-- ghc fix: 0
+-- goanna1: 1
+-- goanna2: 2
+-- goanna3: 5
+-- goanna4: 7
+-- goanna5: 7
